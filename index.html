@@ -1,0 +1,2993 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>점진적 과부하 - 운동 기록 & 분석</title>
+
+  <!-- PWA & Mobile Web App Meta Tags -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <meta name="theme-color" content="#090b10" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="과부하" />
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f5fbe8',
+              100: '#e8f7c9',
+              400: '#c8f56b',
+              500: '#b8f35a',
+              600: '#9bd63f',
+              bg: '#090b10',
+              card: '#11151c',
+              border: '#202733',
+              accent: '#b8f35a'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- React & Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- html2canvas for Image Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  
+  <!-- Font (Pretendard) -->
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+
+  <style>
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+      background-color: #0a0f1d;
+      color: #f8fafc;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      margin: 0;
+      padding: 0;
+    }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #0a0f1d; }
+    ::-webkit-scrollbar-thumb { background: #243047; border-radius: 4px; }
+    .neon-shadow {
+      box-shadow: 0 0 15px rgba(57, 224, 121, 0.25);
+    }
+    .today-highlight { border: 1px solid #b8f35a !important; box-shadow: inset 0 0 0 1px rgba(184,243,90,.12), 0 0 0 1px rgba(184,243,90,.16) !important; }
+    :root { color-scheme: dark; }
+    body { background: #090b10; letter-spacing: -0.01em; }
+    button, input, select { font-family: inherit; }
+    button { -webkit-touch-callout: none; }
+    .bg-brand-card { background: linear-gradient(145deg, #141922 0%, #10141b 100%) !important; }
+    .border-brand-border { border-color: #242b36 !important; }
+    .rounded-2xl { border-radius: 20px !important; }
+    .rounded-xl { border-radius: 15px !important; }
+    .shadow-2xl { box-shadow: 0 24px 70px rgba(0,0,0,.48) !important; }
+    .neon-shadow { box-shadow: 0 10px 30px rgba(184,243,90,.16) !important; }
+    .today-highlight { border-width: 1px !important; box-shadow: inset 0 0 0 1px rgba(184,243,90,.12), 0 0 0 1px rgba(184,243,90,.16) !important; }
+    input, select { transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+    input:focus, select:focus { box-shadow: 0 0 0 3px rgba(184,243,90,.08); }
+    nav { padding-bottom: calc(.5rem + env(safe-area-inset-bottom)) !important; }
+    @media (min-width: 640px) { #root > div { max-width: 520px; margin: 0 auto; } }
+  </style>
+</head>
+<body class="bg-[#0a0f1d] text-slate-100 min-h-screen">
+
+  <div id="root" class="w-full min-h-screen bg-[#0a0f1d] flex flex-col relative"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- Helper Functions for Date formatting ---
+    const getFormattedDate = (dateObj = new Date()) => {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+      const dayName = dayNames[dateObj.getDay()];
+      return `${year}.${month}.${day} (${dayName})`;
+    };
+
+    const getIsoDateStr = (dateObj = new Date()) => {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const parseIsoDate = (isoStr) => {
+      if (!isoStr) return new Date();
+      const [y, m, d] = isoStr.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    const calculateDDay = (targetDateStr) => {
+      if (!targetDateStr) return null;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const target = parseIsoDate(targetDateStr);
+      target.setHours(0, 0, 0, 0);
+
+      const diffTime = target.getTime() - today.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 0) return "D-Day";
+      if (diffDays > 0) return `D-${diffDays}`;
+      return `D+${Math.abs(diffDays)}`;
+    };
+
+    const getCurrentWeekDays = () => {
+      const now = new Date();
+      const currentDay = now.getDay();
+      const distanceToMon = currentDay === 0 ? -6 : 1 - currentDay;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + distanceToMon);
+
+      const days = [];
+      const dayLabels = ["월", "화", "수", "목", "금", "토", "일"];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        days.push({
+          dateIso: getIsoDateStr(d),
+          dayLabel: dayLabels[i]
+        });
+      }
+      return days;
+    };
+
+    const formatDateRange = (startDate, endDate) => {
+      const sm = startDate.getMonth() + 1;
+      const sd = startDate.getDate();
+      const em = endDate.getMonth() + 1;
+      const ed = endDate.getDate();
+      return `${sm}/${sd}~${em}/${ed}`;
+    };
+
+    const Icon = ({ name, size = 20, className = "" }) => {
+      const icons = {
+        home: <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M9 22V12h6v10" />,
+        log: <path d="M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z M16 2v4 M8 2v4 M3 10h18" />,
+        analytics: <path d="M18 20V10 M12 20V4 M6 20v-6" />,
+        target: <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 18a6 6 0 1 0 0-12 6 6 0 0 0 12z M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />,
+        more: <path d="M12 12h.01 M19 12h.01 M5 12h.01" />,
+        close: <path d="M6 6l12 12 M18 6L6 18" />,
+        trophy: <path d="M8 21h8 M12 17v4 M7 4h10v7a5 5 0 0 1-10 0V4z M7 7H4v2a4 4 0 0 0 4 4 M17 7h3v2a4 4 0 0 1-4 4" />,
+        flame: <path d="M12 2c0 3-2 5-4 7 0-2-1-3-2-3-1 2-1 4 0 7 0 4 3 7 7 7s7-3 7-7c0-3-2-5-4-7 0 2-1 3-2 3-1-2-1-4 0-7z" />,
+        zap: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />,
+        chart: <path d="M4 19V5 M4 19h16 M8 16v-5 M12 16V8 M16 16v-4" />,
+        plus: <path d="M12 5v14 M5 12h14" />,
+        check: <path d="M20 6L9 17l-5-5" />,
+        chevronLeft: <path d="M15 18l-6-6 6-6" />,
+        chevronRight: <path d="M9 18l6-6-6-6" />,
+        dumbbell: <path d="m6.5 6.5 11 11 M21 21l-1-1 M3 3l1 1 M18 22l3-3 M3 6l3-3 M14 2l4 4 M2 14l4 4" />,
+        trash: <path d="M3 6h18 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />,
+        download: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3" />,
+        upload: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12" />,
+        scale: <path d="M12 3v18 M3 12h18 M5 7l7 5 7-5" />,
+        calendar: <g><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></g>,
+        settings: <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />,
+        runner: <path d="M13 4a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm-4.5 12l2.5-3.5L8.5 7h5l1.5 3.5h3v2h-4l-1-2.5-1.5 2 2.5 4H8.5z" />,
+        printer: <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z" />,
+        time: <g><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></g>
+      };
+
+      return (
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          width={size} 
+          height={size} 
+          viewBox="0 0 24 24" 
+          fill="none" 
+          stroke="currentColor" 
+          strokeWidth="2" 
+          strokeLinecap="round" 
+          strokeLinejoin="round" 
+          className={className}
+        >
+          {icons[name] || <circle cx="12" cy="12" r="10" />}
+        </svg>
+      );
+    };
+
+    const DEFAULT_EXERCISE_CONFIGS = {
+      "벤치프레스": { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 },
+      "스쿼트": { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 90 },
+      "데드리프트": { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 120 },
+      "숄더프레스": { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 },
+      "렛풀다운": { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 },
+      "바벨 컬": { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 45 },
+      "푸시업": { useWeight: false, useReps: true, useSets: true, isCardio: false, restTime: 45 },
+      "러닝머신": { useWeight: false, useReps: false, useSets: false, isCardio: true, restTime: 30 }
+    };
+
+    const DEFAULT_EXERCISE_TYPES = Object.keys(DEFAULT_EXERCISE_CONFIGS);
+
+    const CLEAN_INITIAL_DATA = {
+      user: { name: "운동러" },
+      exerciseTypes: DEFAULT_EXERCISE_TYPES,
+      exerciseConfigs: DEFAULT_EXERCISE_CONFIGS,
+      dailyLogs: {},
+      completedDates: [],
+      goals: [],
+      settings: { enableBodyComposition: false }
+    };
+
+    function App() {
+      const [appData, setAppData] = useState(() => {
+        const saved = localStorage.getItem("progressive_overload_data");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (!parsed.exerciseTypes) parsed.exerciseTypes = DEFAULT_EXERCISE_TYPES;
+            if (!parsed.exerciseConfigs) parsed.exerciseConfigs = DEFAULT_EXERCISE_CONFIGS;
+            if (!parsed.dailyLogs) parsed.dailyLogs = {};
+            if (!parsed.goals) parsed.goals = [];
+            if (!parsed.settings) parsed.settings = { enableBodyComposition: false };
+            return parsed;
+          } catch (e) {
+            return CLEAN_INITIAL_DATA;
+          }
+        }
+        return CLEAN_INITIAL_DATA;
+      });
+
+      const [activeTab, setActiveTab] = useState("home");
+      const [showToast, setShowToast] = useState(false);
+      const [toastMsg, setToastMsg] = useState("");
+
+      const todayObj = new Date();
+      const [calYear, setCalYear] = useState(todayObj.getFullYear());
+      const [calMonth, setCalMonth] = useState(todayObj.getMonth());
+
+      const [selectedDateIso, setSelectedDateIso] = useState(null);
+      const [showDateModal, setShowDateModal] = useState(false);
+
+      const [showSelectExModal, setShowSelectExModal] = useState(false);
+
+      const [showExConfigModal, setShowExConfigModal] = useState(false);
+      const [newCustomExName, setNewCustomExName] = useState("");
+
+      const [analyticsEx, setAnalyticsEx] = useState("");
+
+      const [showGoalModal, setShowGoalModal] = useState(false);
+      const [goalType, setGoalType] = useState("exercise");
+      const [goalExName, setGoalExName] = useState("");
+      const [goalTarget, setGoalTarget] = useState("");
+      const [goalUnit, setGoalUnit] = useState("회");
+      const [goalDeadline, setGoalDeadline] = useState(getIsoDateStr());
+      const [weightGoalDirection, setWeightGoalDirection] = useState("lose"); // "lose" (감량) or "gain" (증량)
+
+      const [showResetModal, setShowResetModal] = useState(false);
+
+      // --- LIVE WORKOUT SESSION STATE ---
+      const [activeWorkoutSession, setActiveWorkoutSession] = useState(null); // { dateIso, exId, exName, currentSetIdx, isResting: bool, timerSeconds: number, maxRestSeconds: number }
+      const timerRef = useRef(null);
+
+      // Timer Interval Effect
+      useEffect(() => {
+        if (activeWorkoutSession && activeWorkoutSession.isResting) {
+          timerRef.current = setInterval(() => {
+            setActiveWorkoutSession(prev => {
+              if (!prev || !prev.isResting) return prev;
+              if (prev.timerSeconds <= 1) {
+                return { ...prev, timerSeconds: 0, isResting: true, timerFinished: true };
+              }
+              return { ...prev, timerSeconds: prev.timerSeconds - 1 };
+            });
+          }, 1000);
+        } else {
+          if (timerRef.current) clearInterval(timerRef.current);
+        }
+
+        return () => {
+          if (timerRef.current) clearInterval(timerRef.current);
+        };
+      }, [activeWorkoutSession?.isResting]);
+
+      // Start Live Workout Session for an exercise
+      const startWorkoutSession = (dateIso, exId) => {
+        const dayLog = appData.dailyLogs[dateIso];
+        if (!dayLog || !dayLog.exercises) return;
+        const ex = dayLog.exercises.find(e => e.id === exId);
+        if (!ex) return;
+
+        const cfg = appData.exerciseConfigs[ex.name] || {};
+        const restTime = cfg.restTime || 60;
+
+        // Find first incomplete set index
+        let initialSetIdx = ex.sets.findIndex(s => !s.done);
+        if (initialSetIdx === -1) initialSetIdx = 0;
+
+        setActiveWorkoutSession({
+          dateIso,
+          exId,
+          exName: ex.name,
+          currentSetIdx: initialSetIdx,
+          isResting: false,
+          timerSeconds: restTime,
+          maxRestSeconds: restTime,
+          timerFinished: false
+        });
+      };
+
+      const finishCurrentSetAndRest = () => {
+        if (!activeWorkoutSession) return;
+        const { dateIso, exId, currentSetIdx, exName } = activeWorkoutSession;
+        
+        // 1. Mark current set as completed
+        toggleSetDoneForDate(dateIso, exId, currentSetIdx);
+
+        const dayLog = appData.dailyLogs[dateIso];
+        const ex = dayLog?.exercises?.find(e => e.id === exId);
+        const totalSets = ex ? ex.sets.length : 1;
+
+        const cfg = appData.exerciseConfigs[exName] || {};
+        const restTime = cfg.restTime || 60;
+
+        // If last set, end workout session
+        if (currentSetIdx >= totalSets - 1) {
+          triggerToast("모든 세트를 완료했습니다! 수고하셨습니다. 🔥");
+          setActiveWorkoutSession(null);
+          return;
+        }
+
+        // Otherwise enter Resting state
+        setActiveWorkoutSession(prev => ({
+          ...prev,
+          isResting: true,
+          timerSeconds: restTime,
+          maxRestSeconds: restTime,
+          timerFinished: false
+        }));
+      };
+
+      const nextSetStart = () => {
+        if (!activeWorkoutSession) return;
+        setActiveWorkoutSession(prev => ({
+          ...prev,
+          currentSetIdx: prev.currentSetIdx + 1,
+          isResting: false,
+          timerFinished: false
+        }));
+      };
+
+      const exitWorkoutSession = () => {
+        setActiveWorkoutSession(null);
+        triggerToast("운동 세션이 종료되었습니다.");
+      };
+
+      // --- RECORD EXPORT STATE & MODALS ---
+      const [showExportModal, setShowExportModal] = useState(false);
+      const [exportMode, setExportMode] = useState("weekly");
+      const [selectedPeriodKey, setSelectedPeriodKey] = useState("");
+      const exportReportRef = useRef(null);
+
+      const fileInputRef = useRef(null);
+
+      useEffect(() => {
+        localStorage.setItem("progressive_overload_data", JSON.stringify(appData));
+      }, [appData]);
+
+      const triggerToast = (msg) => {
+        setToastMsg(msg);
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 2500);
+      };
+
+      const todayIso = getIsoDateStr();
+      const todayFormatted = getFormattedDate();
+
+      const todayLog = appData.dailyLogs[todayIso] || { weight: "", exercises: [] };
+
+      const totalCompletedSetsToday = useMemo(() => {
+        return (todayLog.exercises || []).reduce((acc, ex) => {
+          return acc + (ex.sets || []).filter(s => s.done).length;
+        }, 0);
+      }, [todayLog]);
+
+      const totalRepsToday = useMemo(() => {
+        return (todayLog.exercises || []).reduce((acc, ex) => {
+          return acc + (ex.sets || []).filter(s => s.done).reduce((sAcc, s) => sAcc + Number(s.reps || 0), 0);
+        }, 0);
+      }, [todayLog]);
+
+      const totalCardioMinutesToday = useMemo(() => {
+        return (todayLog.exercises || []).reduce((acc, ex) => {
+          const cfg = appData.exerciseConfigs[ex.name] || {};
+          if (cfg.isCardio) {
+            return acc + (ex.sets || []).filter(s => s.done).reduce((sAcc, s) => sAcc + Number(s.duration || 0), 0);
+          }
+          return acc;
+        }, 0);
+      }, [todayLog, appData.exerciseConfigs]);
+
+      const currentLatestWeight = useMemo(() => {
+        const sortedDates = Object.keys(appData.dailyLogs || {})
+          .filter(d => appData.dailyLogs[d] && appData.dailyLogs[d].weight)
+          .sort((a, b) => b.localeCompare(a));
+        if (sortedDates.length > 0) {
+          return appData.dailyLogs[sortedDates[0]].weight;
+        }
+        return 0;
+      }, [appData.dailyLogs]);
+
+      const currentBodyComposition = useMemo(() => {
+        const sortedDates = Object.keys(appData.dailyLogs || {})
+          .filter(d => appData.dailyLogs[d] && (appData.dailyLogs[d].bodyFat || appData.dailyLogs[d].muscleMass))
+          .sort((a, b) => b.localeCompare(a));
+        if (sortedDates.length > 0) {
+          const latestLog = appData.dailyLogs[sortedDates[0]];
+          return {
+            bodyFat: latestLog.bodyFat || null,
+            muscleMass: latestLog.muscleMass || null
+          };
+        }
+        return { bodyFat: null, muscleMass: null };
+      }, [appData.dailyLogs]);
+
+      const weightHistoryList = useMemo(() => {
+        return Object.keys(appData.dailyLogs || {})
+          .filter(d => appData.dailyLogs[d] && appData.dailyLogs[d].weight)
+          .sort((a, b) => a.localeCompare(b))
+          .map(d => ({
+            dateIso: d,
+            dateLabel: `${Number(d.split('-')[1])}/${Number(d.split('-')[2])}`,
+            weight: Number(appData.dailyLogs[d].weight)
+          }));
+      }, [appData.dailyLogs]);
+
+      const selectedAnalyticsCfg = appData.exerciseConfigs[analyticsEx] || { useWeight: true, useReps: true, isCardio: false };
+
+      const weeklyStats = useMemo(() => {
+        if (!analyticsEx) return [];
+        const logs = appData.dailyLogs || {};
+        const weeksMap = {};
+
+        Object.keys(logs).forEach(dateIso => {
+          const dayLog = logs[dateIso];
+          if (!dayLog || !dayLog.exercises) return;
+
+          const dateObj = parseIsoDate(dateIso);
+          const dayOfWeek = dateObj.getDay();
+          const dist = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+          const monday = new Date(dateObj);
+          monday.setDate(dateObj.getDate() + dist);
+          
+          const sunday = new Date(monday);
+          sunday.setDate(monday.getDate() + 6);
+
+          const weekKey = getIsoDateStr(monday);
+
+          if (!weeksMap[weekKey]) {
+            weeksMap[weekKey] = {
+              mondayObj: monday,
+              sundayObj: sunday,
+              totalWeightSum: 0,
+              weightCount: 0,
+              totalRepsSum: 0,
+              repsCount: 0,
+              totalSpeedSum: 0,
+              totalDurationSum: 0,
+              cardioCount: 0
+            };
+          }
+
+          dayLog.exercises.forEach(ex => {
+            if (ex.name === analyticsEx) {
+              (ex.sets || []).forEach(s => {
+                if (s.done) {
+                  if (selectedAnalyticsCfg.isCardio) {
+                    weeksMap[weekKey].totalSpeedSum += Number(s.speed || 0);
+                    weeksMap[weekKey].totalDurationSum += Number(s.duration || 0);
+                    weeksMap[weekKey].cardioCount += 1;
+                  } else {
+                    if (selectedAnalyticsCfg.useWeight) {
+                      weeksMap[weekKey].totalWeightSum += Number(s.weight || 0);
+                      weeksMap[weekKey].weightCount += 1;
+                    }
+                    if (selectedAnalyticsCfg.useReps) {
+                      weeksMap[weekKey].totalRepsSum += Number(s.reps || 0);
+                      weeksMap[weekKey].repsCount += 1;
+                    }
+                  }
+                }
+              });
+            }
+          });
+        });
+
+        const sortedKeys = Object.keys(weeksMap).sort((a, b) => a.localeCompare(b));
+        return sortedKeys.map((wk, idx) => {
+          const data = weeksMap[wk];
+          const avgWeight = data.weightCount > 0 ? (data.totalWeightSum / data.weightCount).toFixed(1) : 0;
+          const avgReps = data.repsCount > 0 ? (data.totalRepsSum / data.repsCount).toFixed(1) : 0;
+          const avgSpeed = data.cardioCount > 0 ? (data.totalSpeedSum / data.cardioCount).toFixed(1) : 0;
+          const avgDuration = data.cardioCount > 0 ? (data.totalDurationSum / data.cardioCount).toFixed(1) : 0;
+
+          return {
+            weekNum: idx + 1,
+            dateRange: formatDateRange(data.mondayObj, data.sundayObj),
+            avgWeight: Number(avgWeight),
+            avgReps: Number(avgReps),
+            avgSpeed: Number(avgSpeed),
+            avgDuration: Number(avgDuration)
+          };
+        });
+      }, [appData.dailyLogs, analyticsEx, selectedAnalyticsCfg]);
+
+      // --- RECORD EXPORT PERIOD CALCULATIONS ---
+      const availablePeriods = useMemo(() => {
+        const now = new Date();
+        const periods = [];
+
+        if (exportMode === "weekly") {
+          for (let i = 0; i < 6; i++) {
+            const d = new Date(now);
+            d.setDate(now.getDate() - i * 7);
+            const dayOfWeek = d.getDay();
+            const dist = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+            const monday = new Date(d);
+            monday.setDate(d.getDate() + dist);
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+
+            const mIso = getIsoDateStr(monday);
+            const sIso = getIsoDateStr(sunday);
+            const mFormatted = getFormattedDate(monday);
+            const sFormatted = getFormattedDate(sunday);
+
+            periods.push({
+              key: `${mIso}_${sIso}`,
+              startDateIso: mIso,
+              endDateIso: sIso,
+              label: `${mFormatted} ~ ${sFormatted}`
+            });
+          }
+        } else {
+          for (let i = 0; i < 6; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const year = d.getFullYear();
+            const month = d.getMonth() + 1;
+            const lastDay = new Date(year, month, 0).getDate();
+
+            const monthStr = String(month).padStart(2, '0');
+            const startIso = `${year}-${monthStr}-01`;
+            const endIso = `${year}-${monthStr}-${String(lastDay).padStart(2, '0')}`;
+
+            periods.push({
+              key: `${year}_${month}`,
+              startDateIso: startIso,
+              endDateIso: endIso,
+              label: `${year}년 ${month}월 전체 기록`
+            });
+          }
+        }
+        return periods;
+      }, [exportMode]);
+
+      useEffect(() => {
+        if (availablePeriods.length > 0) {
+          setSelectedPeriodKey(availablePeriods[0].key);
+        }
+      }, [exportMode, availablePeriods]);
+
+      const exportReportData = useMemo(() => {
+        if (!selectedPeriodKey) return null;
+        const period = availablePeriods.find(p => p.key === selectedPeriodKey);
+        if (!period) return null;
+
+        const { startDateIso, endDateIso, label } = period;
+        const logs = appData.dailyLogs || {};
+
+        let totalDurationMinutes = 0;
+        let totalSetsCount = 0;
+        let totalRepsCount = 0;
+        const filteredLogs = [];
+        const weightsInRange = [];
+        const bodyFatInRange = [];
+        const muscleMassInRange = [];
+        const exerciseStatsMap = {};
+
+        Object.keys(logs).forEach(dateIso => {
+          if (dateIso >= startDateIso && dateIso <= endDateIso) {
+            const dayLog = logs[dateIso];
+            if (!dayLog) return;
+
+            if (dayLog.weight) {
+              weightsInRange.push({ dateIso, weight: Number(dayLog.weight) });
+            }
+            if (dayLog.bodyFat) {
+              bodyFatInRange.push({ dateIso, bodyFat: Number(dayLog.bodyFat) });
+            }
+            if (dayLog.muscleMass) {
+              muscleMassInRange.push({ dateIso, muscleMass: Number(dayLog.muscleMass) });
+            }
+
+            const dayExs = dayLog.exercises || [];
+            if (dayExs.length > 0) {
+              filteredLogs.push({ dateIso, ...dayLog });
+
+              dayExs.forEach(ex => {
+                const cfg = appData.exerciseConfigs[ex.name] || {};
+                if (!exerciseStatsMap[ex.name]) {
+                  exerciseStatsMap[ex.name] = {
+                    name: ex.name,
+                    isCardio: cfg.isCardio,
+                    maxVal: 0,
+                    setsCount: 0,
+                    repsSum: 0
+                  };
+                }
+
+                (ex.sets || []).forEach(s => {
+                  if (s.done) {
+                    totalSetsCount += 1;
+                    if (cfg.isCardio) {
+                      totalDurationMinutes += Number(s.duration || 0);
+                      exerciseStatsMap[ex.name].maxVal = Math.max(exerciseStatsMap[ex.name].maxVal, Number(s.duration || 0));
+                    } else {
+                      totalRepsCount += Number(s.reps || 0);
+                      const val = cfg.useWeight ? Number(s.weight || 0) : Number(s.reps || 0);
+                      exerciseStatsMap[ex.name].maxVal = Math.max(exerciseStatsMap[ex.name].maxVal, val);
+                      exerciseStatsMap[ex.name].repsSum += Number(s.reps || 0);
+                    }
+                  }
+                });
+              });
+            }
+          }
+        });
+
+        weightsInRange.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+        bodyFatInRange.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+        muscleMassInRange.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+        filteredLogs.sort((a, b) => b.dateIso.localeCompare(a.dateIso));
+
+        const latestW = weightsInRange.length > 0 ? weightsInRange[weightsInRange.length - 1].weight : currentLatestWeight;
+        const firstW = weightsInRange.length > 0 ? weightsInRange[0].weight : currentLatestWeight;
+        const weightDiff = (latestW && firstW) ? (latestW - firstW).toFixed(1) : "0.0";
+
+        // 체지방량 / 골격근량 변화량 계산
+        const latestFat = bodyFatInRange.length > 0 ? bodyFatInRange[bodyFatInRange.length - 1].bodyFat : currentBodyComposition.bodyFat;
+        const firstFat = bodyFatInRange.length > 0 ? bodyFatInRange[0].bodyFat : currentBodyComposition.bodyFat;
+        const bodyFatDiff = (latestFat && firstFat) ? (latestFat - firstFat).toFixed(1) : "0.0";
+
+        const latestMuscle = muscleMassInRange.length > 0 ? muscleMassInRange[muscleMassInRange.length - 1].muscleMass : currentBodyComposition.muscleMass;
+        const firstMuscle = muscleMassInRange.length > 0 ? muscleMassInRange[0].muscleMass : currentBodyComposition.muscleMass;
+        const muscleMassDiff = (latestMuscle && firstMuscle) ? (latestMuscle - firstMuscle).toFixed(1) : "0.0";
+
+        const estimatedCalories = Math.round(totalSetsCount * 35 + totalDurationMinutes * 8);
+        const hours = Math.floor(totalDurationMinutes / 60);
+        const mins = totalDurationMinutes % 60;
+        const durationStr = hours > 0 ? `${hours}시간 ${mins}분` : `${mins}분`;
+
+        return {
+          periodLabel: label,
+          startDateIso,
+          endDateIso,
+          durationStr,
+          estimatedCalories,
+          weightDiff: Number(weightDiff),
+          latestWeight: latestW,
+          weightsInRange,
+          filteredLogs,
+          exerciseStats: Object.values(exerciseStatsMap),
+          bodyComposition: {
+            latestFat,
+            bodyFatDiff: Number(bodyFatDiff),
+            latestMuscle,
+            muscleMassDiff: Number(muscleMassDiff)
+          }
+        };
+      }, [selectedPeriodKey, availablePeriods, appData, currentLatestWeight, currentBodyComposition]);
+
+      const handleDownloadReportImage = () => {
+        if (!exportReportRef.current) return;
+        triggerToast("리포트 이미지 생성 중...");
+
+        window.html2canvas(exportReportRef.current, {
+          backgroundColor: "#0d111a",
+          scale: 2,
+          useCORS: true
+        }).then(canvas => {
+          const image = canvas.toDataURL("image/png");
+          const a = document.createElement("a");
+          a.href = image;
+          a.download = `운동_리포트_${exportMode === 'weekly' ? '주간' : '월간'}_${selectedPeriodKey}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          triggerToast("이미지로 성공적으로 저장되었습니다!");
+        }).catch(err => {
+          triggerToast("이미지 생성 중 오류가 발생했습니다.");
+        });
+      };
+
+      const openDateRecordModal = (dateIso) => {
+        setSelectedDateIso(dateIso);
+        setShowDateModal(true);
+      };
+
+      const handleDateWeightChange = (dateIso, field, val) => {
+        setAppData(prev => {
+          const logs = { ...prev.dailyLogs };
+          const dayLog = logs[dateIso] ? { ...logs[dateIso] } : { weight: "", bodyFat: "", muscleMass: "", exercises: [] };
+          dayLog[field] = val;
+          logs[dateIso] = dayLog;
+          return { ...prev, dailyLogs: logs };
+        });
+      };
+
+      const handleToggleBodyCompositionSetting = () => {
+        setAppData(prev => {
+          const isEnabled = prev.settings?.enableBodyComposition;
+          return {
+            ...prev,
+            settings: {
+              ...prev.settings,
+              enableBodyComposition: !isEnabled
+            }
+          };
+        });
+        triggerToast(`체지방량/근육량 기록 기능이 ${!appData.settings?.enableBodyComposition ? '켜졌습니다' : '꺼졌습니다'}.`);
+      };
+
+      const getMostRecentSetsForExercise = (exerciseName) => {
+        const sortedDates = Object.keys(appData.dailyLogs || {})
+          .filter(d => appData.dailyLogs[d] && appData.dailyLogs[d].exercises && appData.dailyLogs[d].exercises.some(e => e.name === exerciseName))
+          .sort((a, b) => b.localeCompare(a));
+
+        if (sortedDates.length > 0) {
+          const recentLog = appData.dailyLogs[sortedDates[0]];
+          const matchedEx = recentLog.exercises.find(e => e.name === exerciseName);
+          if (matchedEx && matchedEx.sets && matchedEx.sets.length > 0) {
+            return matchedEx.sets.map((s, idx) => ({
+              ...s,
+              setNum: idx + 1,
+              done: false
+            }));
+          }
+        }
+        return null;
+      };
+
+      const addExerciseToDate = (dateIso, exerciseName) => {
+        if (!exerciseName) return;
+        const cfg = appData.exerciseConfigs[exerciseName] || { useWeight: true, useReps: true, useSets: true, isCardio: false };
+
+        setAppData(prev => {
+          const logs = { ...prev.dailyLogs };
+          const dayLog = logs[dateIso] ? { ...logs[dateIso] } : { weight: "", exercises: [] };
+          const exercises = [...(dayLog.exercises || [])];
+
+          const previousSets = getMostRecentSetsForExercise(exerciseName);
+
+          let initialSets = [];
+          if (previousSets && previousSets.length > 0) {
+            initialSets = previousSets;
+          } else {
+            initialSets = cfg.isCardio 
+              ? [{ setNum: 1, speed: 8, duration: 20, done: false }]
+              : cfg.useSets 
+                ? [
+                    { setNum: 1, reps: 10, weight: 0, done: false },
+                    { setNum: 2, reps: 10, weight: 0, done: false },
+                    { setNum: 3, reps: 10, weight: 0, done: false }
+                  ]
+                : [
+                    { setNum: 1, reps: 10, weight: 0, done: false }
+                  ];
+          }
+
+          exercises.push({
+            id: "ex_" + Date.now(),
+            name: exerciseName,
+            sets: initialSets
+          });
+
+          dayLog.exercises = exercises;
+          logs[dateIso] = dayLog;
+          return { ...prev, dailyLogs: logs };
+        });
+
+        setShowSelectExModal(false);
+        triggerToast(`'${exerciseName}' 종목이 추가되었습니다.`);
+      };
+
+      const toggleSetDoneForDate = (dateIso, exId, setIndex) => {
+        setAppData(prev => {
+          const logs = { ...prev.dailyLogs };
+          const dayLog = logs[dateIso] ? { ...logs[dateIso] } : { weight: "", exercises: [] };
+          const exercises = [...(dayLog.exercises || [])];
+          const exObj = exercises.find(e => e.id === exId);
+
+          if (exObj && exObj.sets[setIndex]) {
+            exObj.sets[setIndex].done = !exObj.sets[setIndex].done;
+          }
+
+          dayLog.exercises = exercises;
+          logs[dateIso] = dayLog;
+
+          const hasAnyDone = exercises.some(e => e.sets.some(s => s.done));
+          let compDates = [...(prev.completedDates || [])];
+          if (hasAnyDone) {
+            if (!compDates.includes(dateIso)) compDates.push(dateIso);
+          } else {
+            compDates = compDates.filter(d => d !== dateIso);
+          }
+
+          return { ...prev, dailyLogs: logs, completedDates: compDates };
+        });
+      };
+
+      const updateSetFieldForDate = (dateIso, exId, setIndex, field, val) => {
+        const numVal = parseFloat(val) || 0;
+        setAppData(prev => {
+          const logs = { ...prev.dailyLogs };
+          const dayLog = logs[dateIso] ? { ...logs[dateIso] } : { weight: "", exercises: [] };
+          const exercises = [...(dayLog.exercises || [])];
+          const exObj = exercises.find(e => e.id === exId);
+
+          if (exObj && exObj.sets[setIndex]) {
+            exObj.sets[setIndex][field] = numVal;
+          }
+
+          dayLog.exercises = exercises;
+          logs[dateIso] = dayLog;
+          return { ...prev, dailyLogs: logs };
+        });
+      };
+
+      const addSetToExerciseForDate = (dateIso, exId) => {
+        setAppData(prev => {
+          const logs = { ...prev.dailyLogs };
+          const dayLog = logs[dateIso] ? { ...logs[dateIso] } : { weight: "", exercises: [] };
+          const exercises = [...(dayLog.exercises || [])];
+          const exObj = exercises.find(e => e.id === exId);
+
+          if (exObj) {
+            const cfg = prev.exerciseConfigs[exObj.name] || {};
+            const lastSet = exObj.sets[exObj.sets.length - 1];
+            const newSetNum = exObj.sets.length + 1;
+
+            if (cfg.isCardio) {
+              exObj.sets.push({
+                setNum: newSetNum,
+                speed: lastSet ? lastSet.speed : 8,
+                duration: lastSet ? lastSet.duration : 20,
+                done: false
+              });
+            } else {
+              exObj.sets.push({
+                setNum: newSetNum,
+                reps: lastSet ? lastSet.reps : 10,
+                weight: lastSet ? lastSet.weight : 0,
+                done: false
+              });
+            }
+          }
+
+          dayLog.exercises = exercises;
+          logs[dateIso] = dayLog;
+          return { ...prev, dailyLogs: logs };
+        });
+      };
+
+      const deleteExerciseFromDate = (dateIso, exId) => {
+        setAppData(prev => {
+          const logs = { ...prev.dailyLogs };
+          const dayLog = logs[dateIso] ? { ...logs[dateIso] } : { weight: "", exercises: [] };
+          dayLog.exercises = (dayLog.exercises || []).filter(e => e.id !== exId);
+          logs[dateIso] = dayLog;
+
+          const hasAnyDone = dayLog.exercises.some(e => e.sets.some(s => s.done));
+          let compDates = [...(prev.completedDates || [])];
+          if (!hasAnyDone) {
+            compDates = compDates.filter(d => d !== dateIso);
+          }
+
+          return { ...prev, dailyLogs: logs, completedDates: compDates };
+        });
+        triggerToast("운동이 삭제되었습니다.");
+      };
+
+      const handleToggleExConfigFlag = (exName, flag) => {
+        setAppData(prev => {
+          const configs = { ...prev.exerciseConfigs };
+          const currentConfig = configs[exName] || { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 };
+          
+          let updated = { ...currentConfig, [flag]: !currentConfig[flag] };
+
+          if (flag === 'isCardio' && updated.isCardio) {
+            updated.useWeight = false;
+            updated.useReps = false;
+            updated.useSets = false;
+          } else if (flag !== 'isCardio' && updated.isCardio) {
+            updated.isCardio = false;
+          }
+
+          configs[exName] = updated;
+          return { ...prev, exerciseConfigs: configs };
+        });
+      };
+
+      const handleUpdateExRestTime = (exName, seconds) => {
+        const rest = Math.max(5, parseInt(seconds) || 0);
+        setAppData(prev => {
+          const configs = { ...prev.exerciseConfigs };
+          const currentConfig = configs[exName] || { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 };
+          configs[exName] = { ...currentConfig, restTime: rest };
+          return { ...prev, exerciseConfigs: configs };
+        });
+      };
+
+      const handleAddExConfig = (e) => {
+        e.preventDefault();
+        const name = newCustomExName.trim();
+        if (!name) return;
+        if (appData.exerciseTypes.includes(name)) {
+          triggerToast("이미 존재하는 종목입니다.");
+          return;
+        }
+
+        setAppData(prev => ({
+          ...prev,
+          exerciseTypes: [...prev.exerciseTypes, name],
+          exerciseConfigs: {
+            ...prev.exerciseConfigs,
+            [name]: { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 }
+          }
+        }));
+
+        setNewCustomExName("");
+        triggerToast(`'${name}' 종목이 신규 추가되었습니다.`);
+      };
+
+      const handleDeleteExConfig = (name) => {
+        setAppData(prev => {
+          const newTypes = prev.exerciseTypes.filter(t => t !== name);
+          const newCfgs = { ...prev.exerciseConfigs };
+          delete newCfgs[name];
+          return {
+            ...prev,
+            exerciseTypes: newTypes,
+            exerciseConfigs: newCfgs
+          };
+        });
+        triggerToast(`'${name}' 종목이 삭제되었습니다.`);
+      };
+
+      // --- GOALS MANAGEMENT ---
+      const handleAddGoal = (e) => {
+        e.preventDefault();
+        if (!goalTarget) return;
+
+        let title = "";
+        let startVal = 0;
+
+        if (goalType === "weight") {
+          const dirText = weightGoalDirection === "lose" ? "체중 감량" : "체중 증량";
+          title = `목표 ${dirText} ${goalTarget}${goalUnit}`;
+          // 목표 설정 당시의 현재 체중을 시작 수치(0% 기준점)로 저장
+          startVal = currentLatestWeight ? Number(currentLatestWeight) : Number(goalTarget);
+        } else {
+          if (!goalExName) {
+            triggerToast("운동 종목을 선택해 주세요.");
+            return;
+          }
+          title = `${goalExName} ${goalTarget}${goalUnit}`;
+          
+          // 운동 종목의 설정 시점 기존 최고 수치를 시작 수치로 저장
+          let maxRecord = 0;
+          Object.values(appData.dailyLogs || {}).forEach(dayLog => {
+            (dayLog.exercises || []).forEach(e => {
+              if (e.name === goalExName) {
+                (e.sets || []).forEach(s => {
+                  if (s.done) {
+                    if (goalUnit === "kg") maxRecord = Math.max(maxRecord, Number(s.weight || 0));
+                    else if (goalUnit === "분") maxRecord = Math.max(maxRecord, Number(s.duration || 0));
+                    else maxRecord = Math.max(maxRecord, Number(s.reps || 0));
+                  }
+                });
+              }
+            });
+          });
+          startVal = maxRecord;
+        }
+
+        const newGoal = {
+          id: Date.now(),
+          type: goalType,
+          weightDirection: goalType === "weight" ? weightGoalDirection : null,
+          exerciseName: goalType === "exercise" ? goalExName : "",
+          target: Number(goalTarget),
+          startValue: startVal, // ★ 시작 당시 수치 저장 (0% 기준)
+          deadline: goalDeadline,
+          current: 0,
+          unit: goalUnit,
+          title: title
+        };
+
+        setAppData(prev => ({
+          ...prev,
+          goals: [...(prev.goals || []), newGoal]
+        }));
+
+        setGoalTarget("");
+        setShowGoalModal(false);
+        triggerToast("새로운 목표가 등록되었습니다.");
+      };
+
+      const deleteGoal = (id) => {
+        setAppData(prev => ({
+          ...prev,
+          goals: prev.goals.filter(g => g.id !== id)
+        }));
+        triggerToast("목표가 삭제되었습니다.");
+      };
+
+      const handleExportData = () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData, null, 2));
+        const downloadAnchor = document.createElement("a");
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", `progressive_overload_backup_${todayIso}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+        triggerToast("백업 파일이 내보내졌습니다.");
+      };
+
+      const handleImportData = (e) => {
+        const fileReader = new FileReader();
+        if (e.target.files && e.target.files[0]) {
+          fileReader.readAsText(e.target.files[0], "UTF-8");
+          fileReader.onload = (event) => {
+            try {
+              const parsed = JSON.parse(event.target.result);
+              setAppData(parsed);
+              triggerToast("데이터가 성공적으로 복원되었습니다!");
+            } catch (err) {
+              triggerToast("올바른 백업 JSON 파일이 아닙니다.");
+            }
+          };
+        }
+      };
+
+      const handleFullReset = () => {
+        setShowResetModal(true);
+      };
+
+      const confirmFullReset = () => {
+        // localStorage 완전 삭제
+        localStorage.removeItem("progressive_overload_data");
+
+        // 기본 템플릿 종목도 완전히 지워진 빈 상태 객체 생성
+        const freshInitialData = {
+          user: { name: "운동러" },
+          exerciseTypes: [],
+          exerciseConfigs: {},
+          dailyLogs: {},
+          completedDates: [],
+          goals: [],
+          settings: { enableBodyComposition: false }
+        };
+
+        setAppData(freshInitialData);
+        setAnalyticsEx("");
+        setShowResetModal(false);
+        triggerToast("기본 템플릿을 포함한 모든 운동 종목 및 기록이 완전히 초기화되었습니다.");
+      };
+
+      const weekDays = useMemo(() => getCurrentWeekDays(), []);
+      const completedDatesSet = useMemo(() => new Set(appData.completedDates || []), [appData.completedDates]);
+      const activeStreakCount = useMemo(() => {
+        return weekDays.filter(wd => completedDatesSet.has(wd.dateIso)).length;
+      }, [weekDays, completedDatesSet]);
+
+      // ==========================================
+      // 1. HOME SCREEN VIEW
+      // ==========================================
+      const renderHomeView = () => {
+        const todayExercises = todayLog.exercises || [];
+
+        return (
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+            <div className="flex items-center justify-between py-1">
+              <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <Icon name="zap" size={22} className="text-brand-accent fill-brand-accent" />
+                점진적 과부하
+              </h1>
+              <span className="text-xs text-slate-400 font-medium">{todayFormatted}</span>
+            </div>
+
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-slate-400 font-medium">오늘의 운동 현황</span>
+                <span className="text-xs text-brand-accent font-semibold">실시간 수치</span>
+              </div>
+
+              <div className="flex items-center gap-5 my-2">
+                <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
+                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                    <path
+                      className="text-slate-800"
+                      strokeWidth="3.5"
+                      stroke="currentColor"
+                      fill="none"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                    <path
+                      className="text-brand-accent transition-all duration-700 ease-out"
+                      strokeDasharray={`${todayExercises.length > 0 ? (totalCompletedSetsToday / Math.max(1, todayExercises.length * 3)) * 100 : 0}, 100`}
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                      stroke="currentColor"
+                      fill="none"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                  </svg>
+                  <div className="absolute flex flex-col items-center">
+                    <span className="text-lg font-extrabold text-white">
+                      <span className="text-brand-accent">{todayExercises.filter(e => e.sets.some(s => s.done)).length}</span>/{todayExercises.length}
+                    </span>
+                    <span className="text-[10px] text-slate-400">종목 완료</span>
+                  </div>
+                </div>
+
+                <div className="flex-1 grid grid-cols-2 gap-y-2.5 gap-x-2 text-xs">
+                  <div>
+                    <p className="text-slate-400">완료 세트</p>
+                    <p className="text-sm font-semibold text-slate-100">{totalCompletedSetsToday} 세트</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400">총 횟수</p>
+                    <p className="text-sm font-semibold text-slate-100">{totalRepsToday} 회</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400">유산소 시간</p>
+                    <p className="text-sm font-semibold text-brand-accent">{totalCardioMinutesToday} 분</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-400">최근 체중</p>
+                    <p className="text-sm font-semibold text-slate-100">
+                      {currentLatestWeight > 0 ? `${currentLatestWeight} kg` : "미입력"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => openDateRecordModal(todayIso)}
+                className="w-full mt-3 py-3 bg-brand-accent hover:bg-brand-500 text-slate-950 font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-lg neon-shadow"
+              >
+                <Icon name="plus" size={18} />
+                <span>오늘 운동 추가 & 기록하기</span>
+              </button>
+            </div>
+
+            {/* Weekly Streak Card */}
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-slate-400 font-medium">이번 주 출석 달성</span>
+                <span className="text-xs text-brand-accent font-semibold">{activeStreakCount}/7일 완료</span>
+              </div>
+
+              <div className="flex justify-between items-center px-1">
+                {weekDays.map((item, idx) => {
+                  const isDone = completedDatesSet.has(item.dateIso);
+                  const isToday = item.dateIso === todayIso;
+
+                  return (
+                    <div key={idx} className="flex flex-col items-center gap-1.5">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs transition ${
+                        isDone ? 'bg-brand-accent text-slate-950 font-bold' : 'bg-slate-800 text-slate-500 border border-slate-700'
+                      } ${isToday ? 'ring-2 ring-brand-accent ring-offset-2 ring-offset-[#0a0f1d]' : ''}`}>
+                        {isDone ? <Icon name="check" size={16} /> : item.dayLabel}
+                      </div>
+                      <span className="text-[11px] text-slate-400">{item.dayLabel}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Weight Trend Chart Card */}
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs text-slate-400 font-medium block">체중 변화 추이 그래프</span>
+                  <span className="text-xs font-bold text-white">
+                    현재: {currentLatestWeight > 0 ? `${currentLatestWeight} kg` : "기록 없음"}
+                  </span>
+                </div>
+                <button 
+                  onClick={() => openDateRecordModal(todayIso)}
+                  className="text-xs text-brand-accent hover:underline flex items-center gap-1 font-semibold"
+                >
+                  <Icon name="scale" size={14} /> 체중/신체측정 입력
+                </button>
+              </div>
+
+              {appData.settings?.enableBodyComposition && (
+                <div className="grid grid-cols-2 gap-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/80 text-xs">
+                  <div className="flex items-center justify-between px-2 py-1 bg-slate-800/50 rounded-lg">
+                    <span className="text-slate-400 text-[11px]">체지방량</span>
+                    <span className="font-extrabold text-brand-accent">
+                      {currentBodyComposition.bodyFat ? `${currentBodyComposition.bodyFat} kg` : "미입력"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1 bg-slate-800/50 rounded-lg">
+                    <span className="text-slate-400 text-[11px]">골격근량</span>
+                    <span className="font-extrabold text-brand-accent">
+                      {currentBodyComposition.muscleMass ? `${currentBodyComposition.muscleMass} kg` : "미입력"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {weightHistoryList.length > 0 ? (
+                <div className="pt-4 pb-2 px-2">
+                  <div className="h-28 w-full">
+                    <svg className="w-full h-full overflow-visible" viewBox="0 0 300 80">
+                      <line x1="0" y1="10" x2="300" y2="10" stroke="#1e293b" strokeDasharray="3 3" />
+                      <line x1="0" y1="45" x2="300" y2="45" stroke="#1e293b" strokeDasharray="3 3" />
+
+                      {weightHistoryList.length > 1 ? (
+                        <polyline
+                          fill="none"
+                          stroke="#39e079"
+                          strokeWidth="3"
+                          points={weightHistoryList.slice(-7).map((item, i, arr) => {
+                            const x = (i / Math.max(1, arr.length - 1)) * 260 + 20;
+                            const weights = arr.map(w => w.weight);
+                            const minW = Math.min(...weights);
+                            const maxW = Math.max(...weights);
+                            const range = (maxW - minW) || 1;
+                            const y = 55 - ((item.weight - minW) / range) * 40;
+                            return `${x},${y}`;
+                          }).join(' ')}
+                        />
+                      ) : null}
+
+                      {weightHistoryList.slice(-7).map((item, i, arr) => {
+                        const x = arr.length > 1 ? (i / Math.max(1, arr.length - 1)) * 260 + 20 : 150;
+                        const weights = arr.map(w => w.weight);
+                        const minW = Math.min(...weights);
+                        const maxW = Math.max(...weights);
+                        const range = (maxW - minW) || 1;
+                        const y = arr.length > 1 ? 55 - ((item.weight - minW) / range) * 40 : 35;
+                        return (
+                          <g key={i}>
+                            <circle cx={x} cy={y} r="4.5" fill="#39e079" />
+                            <text x={x} y={y - 8} fill="#39e079" fontSize="10" fontWeight="bold" textAnchor="middle">{item.weight}kg</text>
+                            <text x={x} y={75} fill="#64748b" fontSize="9" textAnchor="middle">{item.dateLabel}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 text-center py-4">기록 버튼을 눌러 오늘 또는 원하는 날짜의 체중을 추가해보세요.</p>
+              )}
+            </div>
+
+            {/* Today's Workout Table Card */}
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div>
+                  <span className="text-xs text-slate-400 font-medium block">오늘의 운동 목록</span>
+                  <span className="text-[10px] text-brand-accent">종목을 클릭하면 운동이 시작됩니다!</span>
+                </div>
+                <span className="text-[11px] text-brand-accent font-semibold">{todayExercises.length}개 종목</span>
+              </div>
+
+              {todayExercises.length === 0 ? (
+                <div className="text-center py-6 text-slate-500 text-xs">
+                  오늘 등록된 운동이 없습니다. [오늘 운동 기록하기] 버튼을 통해 운동을 추가하세요.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {todayExercises.map((ex) => {
+                    const cfg = appData.exerciseConfigs[ex.name] || { useWeight: true, useReps: true, useSets: true, isCardio: false };
+
+                    return (
+                      <div 
+                        key={ex.id} 
+                        onClick={() => startWorkoutSession(todayIso, ex.id)}
+                        className="bg-slate-900/70 hover:bg-slate-800/80 rounded-xl border border-slate-800 p-3 space-y-2 cursor-pointer transition transform active:scale-[0.99] group"
+                      >
+                        <div className="flex justify-between items-center text-xs font-bold text-slate-200">
+                          <span className="flex items-center gap-1.5 group-hover:text-brand-accent transition">
+                            {cfg.isCardio ? <Icon name="runner" size={14} className="text-blue-400" /> : <Icon name="dumbbell" size={14} className="text-brand-accent" />}
+                            {ex.name}
+                            <span className="text-[10px] bg-brand-accent/20 text-brand-accent px-1.5 py-0.5 rounded font-bold ml-1">▶ 운동시작</span>
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-normal">
+                            {cfg.isCardio ? '유산소' : `${ex.sets.filter(s=>s.done).length}/${ex.sets.length} 완료`}
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-center text-xs">
+                            <thead>
+                              <tr className="text-[11px] text-slate-400 border-b border-slate-800">
+                                <th className="py-1 font-medium">세트</th>
+                                {cfg.isCardio ? (
+                                  <>
+                                    <th className="py-1 font-medium">속도(km/h)</th>
+                                    <th className="py-1 font-medium">시간(분)</th>
+                                  </>
+                                ) : (
+                                  <>
+                                    {cfg.useWeight && <th className="py-1 font-medium">무게(kg)</th>}
+                                    {cfg.useReps && <th className="py-1 font-medium">횟수(회)</th>}
+                                  </>
+                                )}
+                                <th className="py-1 font-medium">체크</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/40">
+                              {ex.sets.map((s, sIdx) => (
+                                <tr key={sIdx} className="hover:bg-slate-800/30">
+                                  <td className="py-1.5 text-slate-400">{s.setNum}</td>
+                                  {cfg.isCardio ? (
+                                    <>
+                                      <td className="py-1.5 font-semibold text-slate-200">{s.speed || 0}</td>
+                                      <td className="py-1.5 font-semibold text-slate-200">{s.duration || 0}</td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {cfg.useWeight && <td className="py-1.5 font-semibold text-slate-200">{s.weight || 0}</td>}
+                                      {cfg.useReps && <td className="py-1.5 font-semibold text-slate-200">{s.reps || 0}</td>}
+                                    </>
+                                  )}
+                                  <td className="py-1.5">
+                                    <div
+                                      className={`w-5 h-5 mx-auto rounded flex items-center justify-center transition ${
+                                        s.done 
+                                          ? 'bg-brand-accent text-slate-950 font-bold' 
+                                          : 'bg-slate-800 text-slate-500 border border-slate-700'
+                                      }`}
+                                    >
+                                      <Icon name="check" size={12} />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // 2. LOG / CALENDAR VIEW
+      // ==========================================
+      const renderLogCalendarView = () => {
+        const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+        const firstDayOfWeek = new Date(calYear, calMonth, 1).getDay();
+
+        const dayCells = [];
+        for (let i = 0; i < firstDayOfWeek; i++) {
+          dayCells.push(null);
+        }
+        for (let d = 1; d <= daysInMonth; d++) {
+          const monthStr = String(calMonth + 1).padStart(2, '0');
+          const dayStr = String(d).padStart(2, '0');
+          const dateIso = `${calYear}-${monthStr}-${dayStr}`;
+          dayCells.push({ dayNum: d, dateIso });
+        }
+
+        const handlePrevMonth = () => {
+          if (calMonth === 0) {
+            setCalMonth(11);
+            setCalYear(calYear - 1);
+          } else {
+            setCalMonth(calMonth - 1);
+          }
+        };
+
+        const handleNextMonth = () => {
+          if (calMonth === 11) {
+            setCalMonth(0);
+            setCalYear(calYear + 1);
+          } else {
+            setCalMonth(calMonth + 1);
+          }
+        };
+
+        const monthNames = ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"];
+
+        return (
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+            <div className="flex items-center justify-between py-1">
+              <h1 className="text-lg font-bold text-white flex items-center gap-2">
+                <Icon name="calendar" size={20} className="text-brand-accent" />
+                운동 기록 캘린더
+              </h1>
+            </div>
+
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-4">
+              <div className="flex items-center justify-between px-2">
+                <button 
+                  onClick={handlePrevMonth}
+                  className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition"
+                >
+                  <Icon name="chevronLeft" size={18} />
+                </button>
+                <div className="text-center">
+                  <span className="text-base font-bold text-white">
+                    {calYear}년 {monthNames[calMonth]}
+                  </span>
+                </div>
+                <button 
+                  onClick={handleNextMonth}
+                  className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition"
+                >
+                  <Icon name="chevronRight" size={18} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-7 text-center text-xs font-semibold text-slate-400 py-1 border-b border-slate-800">
+                <span className="text-red-400">일</span>
+                <span>월</span>
+                <span>화</span>
+                <span>수</span>
+                <span>목</span>
+                <span>금</span>
+                <span className="text-blue-400">토</span>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1.5">
+                {dayCells.map((cell, idx) => {
+                  if (!cell) {
+                    return <div key={`empty_${idx}`} className="h-16 rounded-xl bg-slate-900/30"></div>;
+                  }
+
+                  const isToday = cell.dateIso === todayIso;
+                  const logForDay = appData.dailyLogs[cell.dateIso];
+                  const hasExercises = logForDay && logForDay.exercises && logForDay.exercises.length > 0;
+                  const hasWeight = logForDay && logForDay.weight;
+                  const completedSets = hasExercises 
+                    ? logForDay.exercises.reduce((acc, e) => acc + (e.sets || []).filter(s => s.done).length, 0)
+                    : 0;
+
+                  // Find goals deadline matching this cell's date
+                  const matchedGoals = (appData.goals || []).filter(g => g.deadline === cell.dateIso);
+
+                  return (
+                    <button
+                      key={cell.dateIso}
+                      onClick={() => openDateRecordModal(cell.dateIso)}
+                      className={`h-16 rounded-xl p-1.5 flex flex-col justify-between items-start transition relative text-left border ${
+                        isToday 
+                          ? 'today-highlight bg-brand-card' 
+                          : 'bg-slate-800/40 border-slate-800/80 hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="w-full flex justify-between items-center">
+                        <span className={`text-xs font-bold ${
+                          isToday 
+                            ? 'text-brand-accent' 
+                            : idx % 7 === 0 ? 'text-red-400' : idx % 7 === 6 ? 'text-blue-400' : 'text-slate-200'
+                        }`}>
+                          {cell.dayNum}
+                        </span>
+
+                        {isToday && (
+                          <span className="text-[9px] bg-brand-accent text-slate-950 px-1 rounded font-bold">오늘</span>
+                        )}
+                      </div>
+
+                      <div className="w-full flex flex-col gap-0.5 mt-1 overflow-hidden">
+                        {matchedGoals.map(g => (
+                          <div key={g.id} className="flex items-center gap-0.5 text-[9px] bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 px-1 py-0.2 rounded font-bold truncate">
+                            🎯 <span className="truncate">{g.type === 'weight' ? `${g.target}kg` : g.exerciseName}</span>
+                          </div>
+                        ))}
+                        {hasExercises && (
+                          <div className="flex items-center gap-1 text-[10px] text-brand-accent bg-brand-accent/10 px-1 py-0.5 rounded w-full truncate">
+                            <span className="w-1.5 h-1.5 rounded-full bg-brand-accent shrink-0"></span>
+                            <span className="truncate">{completedSets}세트</span>
+                          </div>
+                        )}
+                        {hasWeight && (
+                          <span className="text-[9px] text-slate-400 block truncate">
+                            {logForDay.weight}kg
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // 3. ANALYTICS VIEW
+      // ==========================================
+      const renderAnalyticsView = () => {
+        return (
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+            <div className="flex items-center justify-between py-1">
+              <h1 className="text-lg font-bold text-white flex items-center gap-2">
+                <Icon name="chart" size={18} className="text-brand-accent" />
+                주차별 운동 성장 분석
+              </h1>
+              <span className="text-xs text-slate-400">{todayFormatted}</span>
+            </div>
+
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+              <span className="text-xs text-slate-400 font-medium">분석할 운동 종목 선택</span>
+              <div className="flex flex-wrap gap-2">
+                {appData.exerciseTypes.map((type) => {
+                  const isSelected = analyticsEx === type;
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => setAnalyticsEx(isSelected ? "" : type)}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold transition border ${
+                        isSelected 
+                          ? 'bg-brand-accent text-slate-950 border-brand-accent shadow-md' 
+                          : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <Icon name="dumbbell" size={16} className="text-brand-accent" />
+                  {analyticsEx ? `${analyticsEx} 주차별 변화` : '주차별 변화'}
+                </h3>
+                <span className="text-[11px] text-slate-400">월~일 주간 평균값</span>
+              </div>
+
+              {!analyticsEx ? (
+                <div className="text-center py-8 text-slate-500 text-xs">
+                  아직 운동 종목을 선택하지 않았습니다.
+                </div>
+              ) : weeklyStats.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 text-xs">
+                  아직 '{analyticsEx}' 종목에 완료 등록된 운동 데이터가 없습니다.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {weeklyStats.map((st, i) => {
+                    const prevSt = weeklyStats[i - 1];
+
+                    return (
+                      <div key={i} className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-extrabold text-brand-accent">
+                            {st.weekNum}주차 <span className="text-slate-400 font-normal">({st.dateRange})</span>
+                          </span>
+                          {prevSt && (
+                            <span className="text-[10px] text-slate-400">이전주 대비 변화</span>
+                          )}
+                        </div>
+
+                        {selectedAnalyticsCfg.isCardio ? (
+                          <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                            <div className="bg-slate-800/50 p-2 rounded-lg">
+                              <p className="text-[10px] text-slate-400">평균 속도</p>
+                              <p className="font-bold text-slate-100">
+                                {st.avgSpeed} <span className="text-[10px] text-slate-400">km/h</span>
+                                {prevSt && (
+                                  <span className={`text-[10px] ml-2 ${st.avgSpeed >= prevSt.avgSpeed ? 'text-brand-accent' : 'text-red-400'}`}>
+                                    ({st.avgSpeed >= prevSt.avgSpeed ? '▲' : '▼'} {Math.abs((st.avgSpeed - prevSt.avgSpeed).toFixed(1))})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <div className="bg-slate-800/50 p-2 rounded-lg">
+                              <p className="text-[10px] text-slate-400">평균 시간</p>
+                              <p className="font-bold text-slate-100">
+                                {st.avgDuration} <span className="text-[10px] text-slate-400">분</span>
+                                {prevSt && (
+                                  <span className={`text-[10px] ml-2 ${st.avgDuration >= prevSt.avgDuration ? 'text-brand-accent' : 'text-red-400'}`}>
+                                    ({st.avgDuration >= prevSt.avgDuration ? '▲' : '▼'} {Math.abs((st.avgDuration - prevSt.avgDuration).toFixed(1))})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                            {selectedAnalyticsCfg.useWeight && (
+                              <div className="bg-slate-800/50 p-2 rounded-lg">
+                                <p className="text-[10px] text-slate-400">평균 무게</p>
+                                <p className="font-bold text-slate-100">
+                                  {st.avgWeight} <span className="text-[10px] text-slate-400">kg</span>
+                                  {prevSt && (
+                                    <span className={`text-[10px] ml-2 ${st.avgWeight >= prevSt.avgWeight ? 'text-brand-accent' : 'text-red-400'}`}>
+                                      ({st.avgWeight >= prevSt.avgWeight ? '▲' : '▼'} {Math.abs((st.avgWeight - prevSt.avgWeight).toFixed(1))})
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                            {selectedAnalyticsCfg.useReps && (
+                              <div className="bg-slate-800/50 p-2 rounded-lg">
+                                <p className="text-[10px] text-slate-400">평균 횟수</p>
+                                <p className="font-bold text-slate-100">
+                                  {st.avgReps} <span className="text-[10px] text-slate-400">회</span>
+                                  {prevSt && (
+                                    <span className={`text-[10px] ml-2 ${st.avgReps >= prevSt.avgReps ? 'text-brand-accent' : 'text-red-400'}`}>
+                                      ({st.avgReps >= prevSt.avgReps ? '▲' : '▼'} {Math.abs((st.avgReps - prevSt.avgReps).toFixed(1))})
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // 4. GOALS VIEW
+      // ==========================================
+      const renderGoalsView = () => (
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+          <div className="flex items-center justify-between py-1">
+            <h1 className="text-lg font-bold text-white flex items-center gap-2"><Icon name="trophy" size={18} className="text-brand-accent" />목표 관리</h1>
+            <button 
+              onClick={() => {
+                setGoalType("exercise");
+                setWeightGoalDirection("lose");
+                if (appData.exerciseTypes.length > 0) {
+                  setGoalExName(appData.exerciseTypes[0]);
+                  const cfg = appData.exerciseConfigs[appData.exerciseTypes[0]] || {};
+                  setGoalUnit(cfg.isCardio ? "분" : "회");
+                }
+                setShowGoalModal(true);
+              }}
+              className="text-xs font-semibold text-brand-accent flex items-center gap-1 bg-brand-accent/10 hover:bg-brand-accent/20 px-3 py-1.5 rounded-xl border border-brand-accent/30 transition"
+            >
+              <Icon name="plus" size={14} /> 목표 추가
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            <span className="text-xs text-slate-400 font-medium px-1">나의 운동 & 체중 목표 목록</span>
+
+            {(!appData.goals || appData.goals.length === 0) ? (
+              <div className="text-center py-12 bg-brand-card rounded-2xl border border-brand-border p-6 space-y-2">
+                <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                  <Icon name="target" size={24} />
+                </div>
+                <p className="text-sm font-semibold text-slate-300">등록된 목표가 없습니다.</p>
+                <p className="text-xs text-slate-500">상단의 '+ 목표 추가' 버튼을 통해 새로운 목표를 추가하세요!</p>
+              </div>
+            ) : (
+              appData.goals.map((g) => {
+                let curVal = 0;
+                let pct = 0;
+                const startVal = g.startValue !== undefined ? Number(g.startValue) : 0;
+                const targetVal = Number(g.target);
+
+                if (g.type === "weight") {
+                  curVal = currentLatestWeight ? Number(currentLatestWeight) : 0;
+                  
+                  if (g.weightDirection === "lose") {
+                    // 체중 감량: startVal -> targetVal
+                    if (curVal <= targetVal) {
+                      pct = 100;
+                    } else if (curVal >= startVal || startVal <= targetVal) {
+                      pct = 0;
+                    } else {
+                      const totalDiff = startVal - targetVal;
+                      const progress = startVal - curVal;
+                      pct = Math.max(0, Math.min(100, Math.round((progress / totalDiff) * 100)));
+                    }
+                  } else {
+                    // 체중 증량: startVal -> targetVal
+                    if (curVal >= targetVal) {
+                      pct = 100;
+                    } else if (curVal <= startVal || targetVal <= startVal) {
+                      pct = 0;
+                    } else {
+                      const totalDiff = targetVal - startVal;
+                      const progress = curVal - startVal;
+                      pct = Math.max(0, Math.min(100, Math.round((progress / totalDiff) * 100)));
+                    }
+                  }
+                } else {
+                  // 운동 종목
+                  Object.values(appData.dailyLogs || {}).forEach(dayLog => {
+                    (dayLog.exercises || []).forEach(e => {
+                      if (e.name === g.exerciseName) {
+                        (e.sets || []).forEach(s => {
+                          if (s.done) {
+                            if (g.unit === "kg") {
+                              curVal = Math.max(curVal, Number(s.weight || 0));
+                            } else if (g.unit === "분") {
+                              curVal = Math.max(curVal, Number(s.duration || 0));
+                            } else {
+                              curVal = Math.max(curVal, Number(s.reps || 0));
+                            }
+                          }
+                        });
+                      }
+                    });
+                  });
+
+                  if (curVal >= targetVal) {
+                    pct = 100;
+                  } else if (curVal <= startVal || targetVal <= startVal) {
+                    pct = Math.max(0, Math.min(100, Math.round((curVal / Math.max(1, targetVal)) * 100)));
+                  } else {
+                    const totalDiff = targetVal - startVal;
+                    const progress = curVal - startVal;
+                    pct = Math.max(0, Math.min(100, Math.round((progress / totalDiff) * 100)));
+                  }
+                }
+
+                const dDayText = calculateDDay(g.deadline);
+
+                return (
+                  <div key={g.id} className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-2 relative">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className={`p-1.5 rounded-lg text-xs font-bold ${
+                          g.type === 'weight' ? 'bg-blue-500/10 text-blue-400' : 'bg-brand-accent/10 text-brand-accent'
+                        }`}>
+                          {g.type === 'weight' ? (g.weightDirection === 'lose' ? '체중 감량' : '체중 증량') : '운동'}
+                        </span>
+                        <h4 className="text-sm font-bold text-slate-100">{g.title}</h4>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {dDayText && (
+                          <span className="text-[11px] font-extrabold bg-brand-accent text-slate-950 px-2 py-0.5 rounded-full shadow">
+                            {dDayText}
+                          </span>
+                        )}
+                        <button onClick={() => deleteGoal(g.id)} className="text-slate-500 hover:text-red-400 p-1">
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs pt-1">
+                      <span className="text-slate-400">
+                        현재: <strong className="text-white">{curVal} {g.unit}</strong> / 목표: <strong className="text-brand-accent">{g.target} {g.unit}</strong>
+                      </span>
+                      <span className="font-bold text-brand-accent">{pct}% 달성</span>
+                    </div>
+
+                    <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden mt-1">
+                      <div 
+                        className="bg-brand-accent h-full transition-all duration-500 rounded-full"
+                        style={{ width: `${pct}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      );
+
+      // ==========================================
+      // 5. MORE / SETTINGS VIEW
+      // ==========================================
+      const renderMoreView = () => (
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+          <h1 className="text-lg font-bold text-white py-1 flex items-center gap-2"><Icon name="settings" size={18} className="text-brand-accent" />더보기 및 설정</h1>
+
+          {/* Record Export Entry Card */}
+          <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-bold text-slate-100 block">기록 출력 리포트</span>
+                <span className="text-xs text-slate-400">주별 / 월별 기록을 한눈에 보고 이미지 저장</span>
+              </div>
+              <button
+                onClick={() => setShowExportModal(true)}
+                className="py-2.5 px-3.5 bg-brand-accent hover:bg-brand-500 text-slate-950 font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow-lg neon-shadow shrink-0"
+              >
+                <Icon name="printer" size={16} /> 기록 출력
+              </button>
+            </div>
+          </div>
+
+          {/* Body Composition Option Switch */}
+          <div className="bg-brand-card p-4 rounded-2xl border border-brand-border flex items-center justify-between">
+            <div>
+              <span className="text-sm font-bold text-slate-100 block">체지방량 & 골격근량 기록</span>
+              <span className="text-xs text-slate-400">홈 화면 및 일자별 기록에 체지방/골격근량 표시</span>
+            </div>
+            <button
+              onClick={handleToggleBodyCompositionSetting}
+              className={`w-12 h-6 rounded-full transition-colors relative flex items-center px-1 ${
+                appData.settings?.enableBodyComposition ? 'bg-brand-accent' : 'bg-slate-700'
+              }`}
+            >
+              <div
+                className={`w-4 h-4 rounded-full bg-slate-950 transition-transform transform ${
+                  appData.settings?.enableBodyComposition ? 'translate-x-6' : 'translate-x-0'
+                }`}
+              ></div>
+            </button>
+          </div>
+
+          {/* Exercise Types & Settings Button */}
+          <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-bold text-slate-100 block">운동 종목 목록 설정</span>
+                <span className="text-xs text-slate-400">종목별 무게, 횟수, 세트, 유산소 설정관리</span>
+              </div>
+              <button
+                onClick={() => setShowExConfigModal(true)}
+                className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1 border border-slate-700"
+              >
+                <Icon name="settings" size={14} /> 설정하기
+              </button>
+            </div>
+          </div>
+
+          {/* Backup & Restore */}
+          <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+            <span className="text-xs text-slate-400 font-medium">데이터 백업 & 복원</span>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                onClick={handleExportData}
+                className="py-2.5 px-3 text-xs text-brand-accent bg-brand-accent/10 hover:bg-brand-accent/20 rounded-xl font-semibold border border-brand-accent/30 transition flex items-center justify-center gap-1.5"
+              >
+                <Icon name="download" size={15} /> 백업 내보내기
+              </button>
+
+              <button 
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                className="py-2.5 px-3 text-xs text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl font-semibold border border-slate-700 transition flex items-center justify-center gap-1.5"
+              >
+                <Icon name="upload" size={15} /> 데이터 불러오기
+              </button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleImportData} 
+                accept=".json" 
+                className="hidden" 
+              />
+            </div>
+          </div>
+
+          {/* Reset */}
+          <div className="bg-brand-card p-4 rounded-2xl border border-brand-border space-y-3">
+            <span className="text-xs text-slate-400 font-medium">기록 관리</span>
+            <button 
+              onClick={handleFullReset}
+              className="w-full py-3 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 rounded-xl font-bold border border-red-500/20 transition flex items-center justify-center gap-1.5"
+            >
+              <Icon name="trash" size={16} /> 모든 기록 및 설정 초기화
+            </button>
+          </div>
+        </div>
+      );
+
+      // ==========================================
+      // MODAL: WORKOUT RECORD FOR SELECTED DATE
+      // ==========================================
+      const renderDateRecordModal = () => {
+        if (!showDateModal || !selectedDateIso) return null;
+
+        const dateObj = parseIsoDate(selectedDateIso);
+        const formattedTitle = getFormattedDate(dateObj);
+        const dayLog = appData.dailyLogs[selectedDateIso] || { weight: "", bodyFat: "", muscleMass: "", exercises: [] };
+        const isToday = selectedDateIso === todayIso;
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3">
+            <div className="bg-brand-card border border-brand-border rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+              
+              <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-white">{formattedTitle}</h2>
+                    {isToday && (
+                      <span className="text-[10px] bg-brand-accent text-slate-950 px-2 py-0.5 rounded-full font-extrabold">TODAY</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400">운동 상세 기록 및 신체 수치 입력</p>
+                </div>
+                <button 
+                  onClick={() => setShowDateModal(false)}
+                  className="w-8 h-8 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-4 overflow-y-auto flex-1 space-y-4">
+                {/* Weight & Body Fat Inputs */}
+                <div className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400">
+                        <Icon name="scale" size={18} />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-slate-200 block">체중 및 신체 기록</span>
+                        <span className="text-[10px] text-slate-400">날짜별 측정값</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="체중"
+                        value={dayLog.weight || ""}
+                        onChange={(e) => handleDateWeightChange(selectedDateIso, "weight", e.target.value)}
+                        className="w-20 bg-slate-800 border border-slate-700 rounded-lg py-1.5 px-2 text-right text-xs text-white font-bold focus:outline-none focus:border-brand-accent"
+                      />
+                      <span className="text-xs text-slate-400 font-semibold">kg</span>
+                    </div>
+                  </div>
+
+                  {appData.settings?.enableBodyComposition && (
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 text-xs">
+                      <div className="flex items-center justify-between bg-slate-800/40 p-2 rounded-lg">
+                        <span className="text-[11px] text-slate-400">체지방량</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            step="0.1"
+                            placeholder="미입력"
+                            value={dayLog.bodyFat || ""}
+                            onChange={(e) => handleDateWeightChange(selectedDateIso, "bodyFat", e.target.value)}
+                            className="w-16 bg-slate-800 border border-slate-700 rounded py-1 px-1.5 text-right font-extrabold text-brand-accent focus:outline-none focus:border-brand-accent text-xs"
+                          />
+                          <span className="text-[10px] text-slate-400">kg</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between bg-slate-800/40 p-2 rounded-lg">
+                        <span className="text-[11px] text-slate-400">골격근량</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            step="0.1"
+                            placeholder="미입력"
+                            value={dayLog.muscleMass || ""}
+                            onChange={(e) => handleDateWeightChange(selectedDateIso, "muscleMass", e.target.value)}
+                            className="w-16 bg-slate-800 border border-slate-700 rounded py-1 px-1.5 text-right font-extrabold text-brand-accent focus:outline-none focus:border-brand-accent text-xs"
+                          />
+                          <span className="text-[10px] text-slate-400">kg</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Exercises List */}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-xs font-bold text-slate-300">운동 종목 목록</span>
+                    <span className="text-xs text-slate-400">총 {(dayLog.exercises || []).length}개 종목</span>
+                  </div>
+
+                  {(!dayLog.exercises || dayLog.exercises.length === 0) ? (
+                    <div className="text-center py-8 bg-slate-900/40 rounded-xl border border-dashed border-slate-800 p-4 space-y-2">
+                      <Icon name="dumbbell" size={24} className="mx-auto text-slate-600" />
+                      <p className="text-xs text-slate-400">이 날짜에 기록된 운동이 없습니다.</p>
+                      <p className="text-[11px] text-slate-500">아래 버튼을 클릭해 운동을 선택해 주세요.</p>
+                    </div>
+                  ) : (
+                    dayLog.exercises.map((ex) => {
+                      const cfg = appData.exerciseConfigs[ex.name] || { useWeight: true, useReps: true, useSets: true, isCardio: false };
+
+                      return (
+                        <div key={ex.id} className="bg-slate-900/90 rounded-xl border border-slate-800 overflow-hidden">
+                          <div className="p-3 flex items-center justify-between bg-slate-800/40 border-b border-slate-800">
+                            <div className="flex items-center gap-2">
+                              <div className="p-1.5 rounded-lg bg-brand-accent/10 text-brand-accent">
+                                {cfg.isCardio ? <Icon name="runner" size={16} /> : <Icon name="dumbbell" size={16} />}
+                              </div>
+                              <span className="font-bold text-sm text-slate-100">{ex.name}</span>
+                              {cfg.isCardio && <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded font-bold">유산소</span>}
+                            </div>
+                            <button
+                              onClick={() => deleteExerciseFromDate(selectedDateIso, ex.id)}
+                              className="text-slate-500 hover:text-red-400 p-1"
+                              title="삭제"
+                            >
+                              <Icon name="trash" size={15} />
+                            </button>
+                          </div>
+
+                          <div className="p-3 space-y-2">
+                            <div className="flex items-center text-[11px] text-slate-400 text-center pb-1 border-b border-slate-800/60">
+                              <span className="w-12">세트</span>
+                              {cfg.isCardio ? (
+                                <>
+                                  <span className="flex-1">속도(km/h)</span>
+                                  <span className="flex-1">시간(분)</span>
+                                </>
+                              ) : (
+                                <>
+                                  {cfg.useWeight && <span className="flex-1">무게(kg)</span>}
+                                  {cfg.useReps && <span className="flex-1">반복(회)</span>}
+                                </>
+                              )}
+                              <span className="w-12">완료</span>
+                            </div>
+
+                            {ex.sets.map((s, sIdx) => (
+                              <div key={sIdx} className="flex items-center text-center text-xs py-1">
+                                <span className="w-12 text-slate-400 font-medium">{s.setNum}</span>
+                                {cfg.isCardio ? (
+                                  <>
+                                    <div className="flex-1 flex justify-center">
+                                      <input
+                                        type="number"
+                                        value={s.speed || 0}
+                                        onChange={(e) => updateSetFieldForDate(selectedDateIso, ex.id, sIdx, "speed", e.target.value)}
+                                        className="w-14 text-center bg-slate-800 border border-slate-700 rounded py-1 text-white font-semibold focus:outline-none focus:border-brand-accent text-xs"
+                                      />
+                                    </div>
+                                    <div className="flex-1 flex justify-center">
+                                      <input
+                                        type="number"
+                                        value={s.duration || 0}
+                                        onChange={(e) => updateSetFieldForDate(selectedDateIso, ex.id, sIdx, "duration", e.target.value)}
+                                        className="w-14 text-center bg-slate-800 border border-slate-700 rounded py-1 text-white font-semibold focus:outline-none focus:border-brand-accent text-xs"
+                                      />
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    {cfg.useWeight && (
+                                      <div className="flex-1 flex justify-center">
+                                        <input
+                                          type="number"
+                                          value={s.weight || 0}
+                                          onChange={(e) => updateSetFieldForDate(selectedDateIso, ex.id, sIdx, "weight", e.target.value)}
+                                          className="w-14 text-center bg-slate-800 border border-slate-700 rounded py-1 text-white font-semibold focus:outline-none focus:border-brand-accent text-xs"
+                                        />
+                                      </div>
+                                    )}
+                                    {cfg.useReps && (
+                                      <div className="flex-1 flex justify-center">
+                                        <input
+                                          type="number"
+                                          value={s.reps || 0}
+                                          onChange={(e) => updateSetFieldForDate(selectedDateIso, ex.id, sIdx, "reps", e.target.value)}
+                                          className="w-14 text-center bg-slate-800 border border-slate-700 rounded py-1 text-white font-semibold focus:outline-none focus:border-brand-accent text-xs"
+                                        />
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                <div className="w-12 flex justify-center">
+                                  <button
+                                    onClick={() => toggleSetDoneForDate(selectedDateIso, ex.id, sIdx)}
+                                    className={`w-6 h-6 rounded flex items-center justify-center transition ${
+                                      s.done 
+                                        ? 'bg-brand-accent text-slate-950 font-bold' 
+                                        : 'bg-slate-800 text-slate-500 border border-slate-700'
+                                    }`}
+                                  >
+                                    <Icon name="check" size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+
+                            {(cfg.useSets || cfg.isCardio) && (
+                              <button
+                                onClick={() => addSetToExerciseForDate(selectedDateIso, ex.id)}
+                                className="w-full mt-2 py-1.5 text-[11px] font-semibold text-brand-accent hover:bg-brand-accent/10 rounded-lg border border-dashed border-brand-accent/30 transition flex items-center justify-center gap-1"
+                              >
+                                <Icon name="plus" size={12} /> 세트 추가
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setShowSelectExModal(true)}
+                  className="w-full py-3 bg-brand-accent text-slate-950 font-bold rounded-xl transition shadow-md flex items-center justify-center gap-1.5 text-xs"
+                >
+                  <Icon name="plus" size={16} /> 운동 종목 선택 및 추가
+                </button>
+              </div>
+
+              <div className="p-3 border-t border-slate-800 flex justify-end bg-slate-900/50">
+                <button
+                  onClick={() => setShowDateModal(false)}
+                  className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // MODAL: RECORD EXPORT REPORT MODAL
+      // ==========================================
+      const renderExportModal = () => {
+        if (!showExportModal) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[80] flex items-center justify-center p-3">
+            <div className="bg-[#0f141f] border border-slate-800 rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="p-4 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/40">
+                <div className="flex items-center gap-2">
+                  <Icon name="printer" size={20} className="text-brand-accent" />
+                  <h3 className="text-base font-bold text-white">운동 기록 출력 및 리포트</h3>
+                </div>
+                <button 
+                  onClick={() => setShowExportModal(false)}
+                  className="text-slate-400 hover:text-white text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-4 overflow-y-auto flex-1 space-y-4">
+                {/* Export Options */}
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-800 space-y-3">
+                  <span className="text-xs text-slate-400 font-medium block">출력 기간 설정</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setExportMode("weekly")}
+                      className={`py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                        exportMode === "weekly"
+                          ? 'bg-brand-accent text-slate-950 border-brand-accent'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      <Icon name="calendar" size={14} /> 주별 리포트
+                    </button>
+                    <button
+                      onClick={() => setExportMode("monthly")}
+                      className={`py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                        exportMode === "monthly"
+                          ? 'bg-brand-accent text-slate-950 border-brand-accent'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      <Icon name="calendar" size={14} /> 월별 리포트
+                    </button>
+                  </div>
+
+                  <div>
+                    <select
+                      value={selectedPeriodKey}
+                      onChange={(e) => setSelectedPeriodKey(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-accent font-semibold"
+                    >
+                      {availablePeriods.map(p => (
+                        <option key={p.key} value={p.key}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Report Card Preview (Captured by html2canvas) */}
+                {exportReportData && (
+                  <div 
+                    ref={exportReportRef}
+                    className="bg-[#0f141f] border border-slate-800 rounded-2xl p-4 space-y-4 shadow-2xl text-slate-100"
+                  >
+                    {/* Report Header */}
+                    <div className="flex justify-between items-start border-b border-slate-800/80 pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-brand-accent/20 text-brand-accent">
+                          <Icon name="chart" size={22} />
+                        </div>
+                        <div>
+                          <h2 className="text-base font-extrabold text-white">점진적 과부하 리포트</h2>
+                          <p className="text-[10px] text-slate-400">운동 성장의 순간을 기록합니다</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-brand-accent font-bold bg-brand-accent/10 px-2 py-0.5 rounded-full border border-brand-accent/20">
+                          {exportMode === 'weekly' ? '주간 기록' : '월간 기록'}
+                        </span>
+                        <p className="text-[9px] text-slate-400 mt-1">{exportReportData.periodLabel}</p>
+                      </div>
+                    </div>
+
+                    {/* Report Summary Cards */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800/80 text-center">
+                        <div className="flex items-center justify-center gap-1 text-slate-400 text-[10px] mb-1">
+                          <Icon name="time" size={12} /> 총 운동 시간
+                        </div>
+                        <p className="text-xs font-black text-white">{exportReportData.durationStr}</p>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800/80 text-center">
+                        <div className="flex items-center justify-center gap-1 text-slate-400 text-[10px] mb-1">
+                          <Icon name="flame" size={12} className="text-orange-400" /> 소모 칼로리
+                        </div>
+                        <p className="text-xs font-black text-white">{exportReportData.estimatedCalories} <span className="text-[9px] font-normal text-slate-400">kcal</span></p>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800/80 text-center">
+                        <div className="flex items-center justify-center gap-1 text-slate-400 text-[10px] mb-1">
+                          <Icon name="scale" size={12} className="text-blue-400" /> 체중 증감
+                        </div>
+                        <p className={`text-xs font-black ${exportReportData.weightDiff <= 0 ? 'text-brand-accent' : 'text-red-400'}`}>
+                          {exportReportData.weightDiff > 0 ? `+${exportReportData.weightDiff}` : exportReportData.weightDiff} kg
+                        </p>
+                      </div>
+                    </div>
+
+                    {appData.settings?.enableBodyComposition && exportReportData.bodyComposition && (
+                      <div className="grid grid-cols-2 gap-2 bg-slate-900/60 p-2 rounded-xl border border-slate-800/80 text-xs">
+                        <div className="flex justify-between items-center px-2 py-1 bg-slate-800/40 rounded-lg">
+                          <span className="text-[10px] text-slate-400">체지방량 변화</span>
+                          <span className={`font-extrabold ${exportReportData.bodyComposition.bodyFatDiff <= 0 ? 'text-brand-accent' : 'text-red-400'}`}>
+                            {exportReportData.bodyComposition.bodyFatDiff > 0 ? `+${exportReportData.bodyComposition.bodyFatDiff}` : exportReportData.bodyComposition.bodyFatDiff} kg
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center px-2 py-1 bg-slate-800/40 rounded-lg">
+                          <span className="text-[10px] text-slate-400">골격근량 변화</span>
+                          <span className={`font-extrabold ${exportReportData.bodyComposition.muscleMassDiff >= 0 ? 'text-brand-accent' : 'text-red-400'}`}>
+                            {exportReportData.bodyComposition.muscleMassDiff > 0 ? `+${exportReportData.bodyComposition.muscleMassDiff}` : exportReportData.bodyComposition.muscleMassDiff} kg
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Weight Chart Visual */}
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] font-bold text-slate-300 block">체중 변화 추이</span>
+                      <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800">
+                        {exportReportData.weightsInRange.length > 0 ? (
+                          <div className="h-20 w-full">
+                            <svg className="w-full h-full overflow-visible" viewBox="0 0 300 60">
+                              <polyline
+                                fill="none"
+                                stroke="#39e079"
+                                strokeWidth="2.5"
+                                points={exportReportData.weightsInRange.map((item, i, arr) => {
+                                  const x = arr.length > 1 ? (i / (arr.length - 1)) * 260 + 20 : 150;
+                                  const weights = arr.map(w => w.weight);
+                                  const minW = Math.min(...weights);
+                                  const maxW = Math.max(...weights);
+                                  const range = (maxW - minW) || 1;
+                                  const y = 45 - ((item.weight - minW) / range) * 30;
+                                  return `${x},${y}`;
+                                }).join(' ')}
+                              />
+                              {exportReportData.weightsInRange.map((item, i, arr) => {
+                                const x = arr.length > 1 ? (i / (arr.length - 1)) * 260 + 20 : 150;
+                                const weights = arr.map(w => w.weight);
+                                const minW = Math.min(...weights);
+                                const maxW = Math.max(...weights);
+                                const range = (maxW - minW) || 1;
+                                const y = arr.length > 1 ? 45 - ((item.weight - minW) / range) * 30 : 30;
+                                return (
+                                  <g key={i}>
+                                    <circle cx={x} cy={y} r="3.5" fill="#39e079" />
+                                    <text x={x} y={y - 6} fill="#39e079" fontSize="8" fontWeight="bold" textAnchor="middle">{item.weight}kg</text>
+                                  </g>
+                                );
+                              })}
+                            </svg>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-slate-500 text-center py-2">해당 기간 내 기록된 체중 데이터가 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Exercise Progression Bars */}
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-bold text-slate-300 block">운동별 기록 요약</span>
+                      {exportReportData.exerciseStats.length === 0 ? (
+                        <p className="text-[10px] text-slate-500 text-center py-2 bg-slate-900/50 rounded-xl">해당 기간 운동 기록이 없습니다.</p>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {exportReportData.exerciseStats.map((st, i) => (
+                            <div key={i} className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 space-y-1">
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="font-bold text-slate-200 truncate">{st.name}</span>
+                                <span className="text-brand-accent font-extrabold">{st.maxVal} {st.isCardio ? '분' : 'kg/회'}</span>
+                              </div>
+                              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                <div className="bg-brand-accent h-full rounded-full" style={{ width: '85%' }}></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer Encouragement */}
+                    <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Icon name="trophy" size={18} className="text-brand-accent" />
+                        <div>
+                          <p className="text-[11px] font-bold text-white">이번 기수도 수고하셨습니다! 🔥</p>
+                          <p className="text-[9px] text-slate-400">꾸준한 점진적 과부하가 변화를 만듭니다.</p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] text-slate-500">점진적 과부하</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 border-t border-slate-800 flex justify-between items-center bg-slate-900/40">
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  닫기
+                </button>
+                <button
+                  onClick={handleDownloadReportImage}
+                  className="px-5 py-2.5 bg-brand-accent hover:bg-brand-500 text-slate-950 font-bold text-xs rounded-xl transition shadow-lg neon-shadow flex items-center gap-1.5"
+                >
+                  <Icon name="download" size={15} /> 이미지로 저장하기
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      {/* ==========================================
+          MODAL: LIVE WORKOUT TIMER & SESSION VIEW
+          ========================================== */}
+      const renderWorkoutSessionModal = () => {
+        if (!activeWorkoutSession) return null;
+
+        const { dateIso, exId, exName, currentSetIdx, isResting, timerSeconds, maxRestSeconds, timerFinished } = activeWorkoutSession;
+        const dayLog = appData.dailyLogs[dateIso];
+        const ex = dayLog?.exercises?.find(e => e.id === exId);
+        if (!ex) return null;
+
+        const cfg = appData.exerciseConfigs[exName] || {};
+        const currentSet = ex.sets[currentSetIdx] || ex.sets[ex.sets.length - 1];
+
+        const progressPct = isResting ? Math.max(0, Math.min(100, ((maxRestSeconds - timerSeconds) / maxRestSeconds) * 100)) : 0;
+
+        return (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex flex-col justify-between p-5 text-slate-100">
+            {/* Header */}
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <div>
+                <span className="text-xs text-brand-accent font-bold uppercase tracking-wider block">LIVE WORKOUT SESSION</span>
+                <h2 className="text-xl font-black text-white flex items-center gap-2">
+                  <Icon name="dumbbell" size={20} className="text-brand-accent" />
+                  {exName}
+                </h2>
+              </div>
+              <button 
+                onClick={exitWorkoutSession}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+              >
+                운동 종료
+              </button>
+            </div>
+
+            {/* Main Interactive Display */}
+            <div className="flex-1 flex flex-col items-center justify-center space-y-6 my-4">
+              {!isResting ? (
+                /* 1. WORKOUT IN PROGRESS DISPLAY */
+                <div className="w-full max-w-xs bg-slate-900/90 border border-slate-800 p-6 rounded-3xl text-center space-y-4 shadow-2xl">
+                  <div className="inline-block bg-brand-accent/20 text-brand-accent text-xs font-black px-3 py-1 rounded-full">
+                    {currentSetIdx + 1} / {ex.sets.length} 세트 진행 중
+                  </div>
+
+                  <div className="py-2">
+                    {cfg.isCardio ? (
+                      <div className="space-y-1">
+                        <p className="text-3xl font-black text-white">{currentSet.speed || 0} <span className="text-sm font-normal text-slate-400">km/h</span></p>
+                        <p className="text-lg font-bold text-brand-accent">{currentSet.duration || 0} <span className="text-xs font-normal text-slate-400">분</span></p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3 bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60">
+                        <div>
+                          <p className="text-xs text-slate-400 block mb-1">무게</p>
+                          <p className="text-2xl font-black text-white">{currentSet.weight || 0} <span className="text-xs text-slate-400 font-normal">kg</span></p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 block mb-1">목표 횟수</p>
+                          <p className="text-2xl font-black text-brand-accent">{currentSet.reps || 0} <span className="text-xs text-slate-400 font-normal">회</span></p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-400 animate-pulse">
+                    세트를 끝마친 후 아래 버튼을 누르면 휴식 타이머가 시작됩니다.
+                  </p>
+                </div>
+              ) : (
+                /* 2. REST TIMER DISPLAY */
+                <div className="w-full max-w-xs bg-slate-900/90 border border-slate-800 p-6 rounded-3xl text-center space-y-5 shadow-2xl">
+                  <div className="inline-block bg-orange-500/20 text-orange-400 text-xs font-black px-3 py-1 rounded-full">
+                    휴식 시간 중 ({currentSetIdx + 1}/{ex.sets.length} 세트 완료)
+                  </div>
+
+                  <div className="relative w-40 h-40 mx-auto flex items-center justify-center">
+                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                      <path
+                        className="text-slate-800"
+                        strokeWidth="3.5"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                      <path
+                        className="text-orange-400 transition-all duration-300 ease-linear"
+                        strokeDasharray={`${progressPct}, 100`}
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                    </svg>
+                    <div className="absolute flex flex-col items-center">
+                      <span className="text-3xl font-black text-white">{timerSeconds}s</span>
+                      <span className="text-[10px] text-slate-400">남은 휴식시간</span>
+                    </div>
+                  </div>
+
+                  {timerFinished && (
+                    <p className="text-xs font-bold text-brand-accent animate-bounce">
+                      🔔 휴식시간 끝! 다음 세트를 시작하세요!
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Workout Sets Progress Grid */}
+              <div className="flex gap-2 justify-center flex-wrap max-w-xs">
+                {ex.sets.map((s, idx) => (
+                  <div
+                    key={idx}
+                    className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold border transition ${
+                      s.done 
+                        ? 'bg-brand-accent text-slate-950 border-brand-accent' 
+                        : idx === currentSetIdx && !isResting
+                          ? 'bg-slate-800 text-white border-brand-accent ring-2 ring-brand-accent/50'
+                          : 'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}
+                  >
+                    {idx + 1}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Bottom Interactive Control Buttons */}
+            <div className="space-y-2">
+              {!isResting ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={exitWorkoutSession}
+                    className="py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-2xl text-xs transition"
+                  >
+                    여기서 종료하기
+                  </button>
+                  <button
+                    onClick={finishCurrentSetAndRest}
+                    className="py-3.5 bg-brand-accent hover:bg-brand-500 text-slate-950 font-black rounded-2xl text-xs transition shadow-lg neon-shadow"
+                  >
+                    세트 완료 & 휴식 시작
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={exitWorkoutSession}
+                    className="py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-2xl text-xs transition"
+                  >
+                    운동 종료
+                  </button>
+                  <button
+                    onClick={nextSetStart}
+                    className="py-3.5 bg-brand-accent hover:bg-brand-500 text-slate-950 font-black rounded-2xl text-xs transition shadow-lg neon-shadow"
+                  >
+                    다음 세트 시작하기 ▶
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // MODAL: EXERCISE LIST CONFIG
+      // ==========================================
+      const renderExConfigModal = () => {
+        if (!showExConfigModal) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-3">
+            <div className="bg-brand-card border border-brand-border rounded-2xl p-4 w-full max-w-md max-h-[85vh] flex flex-col space-y-3 shadow-2xl">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <Icon name="settings" size={16} className="text-brand-accent" />
+                  운동 종목 목록 및 세부 설정
+                </h3>
+                <button 
+                  onClick={() => setShowExConfigModal(false)}
+                  className="text-slate-400 hover:text-white text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleAddExConfig} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="새 종목 이름 (예: 천국의 계단)"
+                  value={newCustomExName}
+                  onChange={(e) => setNewCustomExName(e.target.value)}
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-accent"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-2 bg-brand-accent text-slate-950 font-bold text-xs rounded-xl hover:bg-brand-500 transition"
+                >
+                  추가
+                </button>
+              </form>
+
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {appData.exerciseTypes.map((exName) => {
+                  const cfg = appData.exerciseConfigs[exName] || { useWeight: true, useReps: true, useSets: true, isCardio: false, restTime: 60 };
+
+                  return (
+                    <div key={exName} className="bg-slate-900/90 border border-slate-800 p-3 rounded-xl space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-200">{exName}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteExConfig(exName)}
+                          className="text-slate-500 hover:text-red-400 text-xs p-1"
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={cfg.useWeight}
+                            disabled={cfg.isCardio}
+                            onChange={() => handleToggleExConfigFlag(exName, 'useWeight')}
+                            className="accent-emerald-500 rounded"
+                          />
+                          <span>무게 설정</span>
+                        </label>
+
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={cfg.useReps}
+                            disabled={cfg.isCardio}
+                            onChange={() => handleToggleExConfigFlag(exName, 'useReps')}
+                            className="accent-emerald-500 rounded"
+                          />
+                          <span>횟수 설정</span>
+                        </label>
+
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={cfg.useSets}
+                            disabled={cfg.isCardio}
+                            onChange={() => handleToggleExConfigFlag(exName, 'useSets')}
+                            className="accent-emerald-500 rounded"
+                          />
+                          <span>세트수 설정</span>
+                        </label>
+
+                        <label className="flex items-center gap-1.5 cursor-pointer font-bold text-blue-400">
+                          <input
+                            type="checkbox"
+                            checked={cfg.isCardio}
+                            onChange={() => handleToggleExConfigFlag(exName, 'isCardio')}
+                            className="accent-blue-500 rounded"
+                          />
+                          <span>유산소 여부</span>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[11px]">
+                        <span className="text-slate-400 font-medium">세트 간 휴식 시간</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="5"
+                            max="600"
+                            value={cfg.restTime || 60}
+                            onChange={(e) => handleUpdateExRestTime(exName, e.target.value)}
+                            className="w-14 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-right font-bold text-brand-accent focus:outline-none focus:border-brand-accent"
+                          />
+                          <span className="text-slate-400">초</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-end border-t border-slate-800 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowExConfigModal(false)}
+                  className="px-4 py-1.5 text-xs font-bold bg-brand-accent text-slate-950 rounded-xl"
+                >
+                  완료
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // MODAL: SELECT EXERCISE
+      // ==========================================
+      const renderSelectExModal = () => {
+        if (!showSelectExModal) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+            <div className="bg-brand-card border border-brand-border rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl">
+              <h3 className="text-sm font-bold text-white">추가할 운동 종목 선택</h3>
+
+              {appData.exerciseTypes.length === 0 ? (
+                <p className="text-xs text-slate-400">등록된 종목이 없습니다. '더보기' 메뉴에서 종목을 설정하세요.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                  {appData.exerciseTypes.map((type, idx) => {
+                    const cfg = appData.exerciseConfigs[type] || {};
+
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => addExerciseToDate(selectedDateIso, type)}
+                        className="w-full text-left px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-brand-accent text-xs font-semibold text-slate-200 transition flex justify-between items-center"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {cfg.isCardio ? <Icon name="runner" size={14} className="text-blue-400" /> : <Icon name="dumbbell" size={14} className="text-brand-accent" />}
+                          {type}
+                        </span>
+                        <Icon name="plus" size={14} className="text-brand-accent" />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSelectExModal(false)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // MODAL: ADD GOAL
+      // ==========================================
+      const renderGoalModal = () => {
+        if (!showGoalModal) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-brand-card border border-brand-border rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl">
+              <h3 className="text-base font-bold text-white">새 목표 추가</h3>
+              
+              <form onSubmit={handleAddGoal} className="space-y-3">
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">목표 유형</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGoalType("exercise");
+                        if (goalExName) {
+                          const cfg = appData.exerciseConfigs[goalExName] || {};
+                          setGoalUnit(cfg.isCardio ? "분" : "회");
+                        }
+                      }}
+                      className={`py-2 text-xs font-bold rounded-xl border transition ${
+                        goalType === "exercise" 
+                          ? 'bg-brand-accent text-slate-950 border-brand-accent' 
+                          : 'bg-slate-900 text-slate-400 border-slate-800'
+                      }`}
+                    >
+                      운동 종목
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGoalType("weight");
+                        setGoalUnit("kg");
+                      }}
+                      className={`py-2 text-xs font-bold rounded-xl border transition ${
+                        goalType === "weight" 
+                          ? 'bg-brand-accent text-slate-950 border-brand-accent' 
+                          : 'bg-slate-900 text-slate-400 border-slate-800'
+                      }`}
+                    >
+                      체중
+                    </button>
+                  </div>
+                </div>
+
+                {goalType === "weight" && (
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">체중 목표 세부 옵션</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setWeightGoalDirection("lose")}
+                        className={`py-1.5 text-xs font-bold rounded-lg border transition ${
+                          weightGoalDirection === "lose" 
+                            ? 'bg-blue-500 text-slate-950 border-blue-500' 
+                            : 'bg-slate-900 text-slate-400 border-slate-800'
+                        }`}
+                      >
+                        체중 감량 (다이어트)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWeightGoalDirection("gain")}
+                        className={`py-1.5 text-xs font-bold rounded-lg border transition ${
+                          weightGoalDirection === "gain" 
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-500' 
+                            : 'bg-slate-900 text-slate-400 border-slate-800'
+                        }`}
+                      >
+                        체중 증량 (벌크업)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {goalType === "exercise" && (
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">운동 종목 선택</label>
+                    <select
+                      value={goalExName}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        setGoalExName(name);
+                        const cfg = appData.exerciseConfigs[name] || {};
+                        if (cfg.isCardio) {
+                          setGoalUnit("분");
+                        } else if (cfg.useWeight && !cfg.useReps) {
+                          setGoalUnit("kg");
+                        } else {
+                          setGoalUnit("회");
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-accent"
+                    >
+                      {appData.exerciseTypes.map((type, idx) => (
+                        <option key={idx} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">목표 수치</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="예: 90"
+                      value={goalTarget}
+                      onChange={(e) => setGoalTarget(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-accent font-bold"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">단위 선택</label>
+                    <select
+                      value={goalUnit}
+                      onChange={(e) => setGoalUnit(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-accent font-bold"
+                    >
+                      <option value="kg">kg</option>
+                      <option value="회">회</option>
+                      <option value="분">분</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">목표 달성 기한 (D-Day)</label>
+                  <input
+                    type="date"
+                    value={goalDeadline}
+                    onChange={(e) => setGoalDeadline(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-accent font-semibold"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowGoalModal(false)}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-400 hover:text-white"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 text-xs font-bold bg-brand-accent text-slate-950 rounded-xl"
+                  >
+                    등록
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      };
+
+      const renderResetModal = () => {
+        if (!showResetModal) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-brand-card border border-brand-border rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl">
+              <div className="flex items-center gap-2 text-red-400">
+                <Icon name="trash" size={18} />
+                <h3 className="text-base font-bold text-white">모든 기록 초기화</h3>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                모든 운동 기록, 체중 데이터, 목표, 그리고 템플릿을 포함한 운동 종목 목록 설정까지 전부 초기화됩니다. 이 작업은 되돌릴 수 없습니다. 정말 삭제하시겠습니까?
+              </p>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowResetModal(false)}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmFullReset}
+                  className="px-4 py-1.5 text-xs font-bold bg-red-500 hover:bg-red-400 text-white rounded-xl transition"
+                >
+                  전부 삭제
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ==========================================
+      // MAIN LAYOUT & NAVIGATION
+      // ==========================================
+      return (
+        <div className="w-full min-h-screen flex flex-col relative bg-[#0a0f1d]">
+          {activeTab === "home" && renderHomeView()}
+          {activeTab === "log" && renderLogCalendarView()}
+          {activeTab === "analytics" && renderAnalyticsView()}
+          {activeTab === "goals" && renderGoalsView()}
+          {activeTab === "more" && renderMoreView()}
+
+          {showToast && (
+            <div className="fixed top-5 left-1/2 transform -translate-x-1/2 bg-slate-800 text-slate-100 text-xs py-2.5 px-4 rounded-full border border-brand-accent/50 shadow-2xl z-50 animate-bounce">
+              {toastMsg}
+            </div>
+          )}
+
+          {renderDateRecordModal()}
+          {renderExConfigModal()}
+          {renderSelectExModal()}
+          {renderGoalModal()}
+          {renderResetModal()}
+          {renderExportModal()}
+          {renderWorkoutSessionModal()}
+
+          <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0f1d]/95 backdrop-blur-md border-t border-slate-800/80 px-2 py-2 flex justify-around items-center z-40">
+            {[
+              { id: "home", label: "홈", icon: "home" },
+              { id: "log", label: "캘린더", icon: "calendar" },
+              { id: "analytics", label: "분석", icon: "analytics" },
+              { id: "goals", label: "목표", icon: "target" },
+              { id: "more", label: "더보기", icon: "more" },
+            ].map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition ${
+                    isActive ? "text-brand-accent font-bold" : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  <Icon name={tab.icon} size={20} />
+                  <span className="text-[10px]">{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      );
+    }
+
+    // Render React App
+    window.onload = function() {
+      ReactDOM.render(<App />, document.getElementById("root"));
+
+      // PWA Service Worker Registration
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./sw.js')
+          .then(reg => console.log('Service Worker registered successfully:', reg.scope))
+          .catch(err => console.log('Service Worker registration failed:', err));
+      }
+    };
+  </script>
+</body>
+</html>

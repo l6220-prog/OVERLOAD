@@ -1,4 +1,4 @@
-const CACHE = 'overload-v1';
+const CACHE = 'overload-v2';
 const CORE = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png'];
 
@@ -13,16 +13,16 @@ self.addEventListener('activate', e => {
   );
 });
 
-// 캐시 우선, 없으면 네트워크 -> 한 번 불러온 CDN 라이브러리·폰트도 오프라인에서 동작
+// 네트워크 우선 시도 후 캐시 fallback (최신 버전 즉시 반영)
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
+    fetch(e.request).then(res => {
       if (res && (res.status === 200 || res.type === 'opaque')) {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
       }
       return res;
-    }).catch(() => caches.match('./index.html')))
+    }).catch(() => caches.match(e.request).then(hit => hit || caches.match('./index.html')))
   );
 });

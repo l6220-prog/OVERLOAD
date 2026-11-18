@@ -1,6 +1,14 @@
-const CACHE = 'overload-v4'; // <--- 버전을 v4로 변경하여 이전 아이콘 캐시 강제 무효화
-const CORE = ['./', './index.html', './manifest.webmanifest',
-  './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const CACHE = 'overload-v5';
+const CORE = [
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/apple-touch-icon.png',
+  './icons/maskable-192.png',
+  './icons/maskable-512.png'
+];
 
 self.addEventListener('install', e => {
   self.skipWaiting();
